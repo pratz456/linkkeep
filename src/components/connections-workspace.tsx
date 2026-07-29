@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, useTransition } from "react"
 import { ConnectionDetail } from "@/components/connection-detail";
 import { ConnectionList } from "@/components/connection-list";
 import { ImportPanel } from "@/components/import-panel";
+import { IntegrationsPanel } from "@/components/integrations-panel";
 import type { ConnectionView } from "@/components/types";
 
 type Counts = Record<string, number>;
@@ -24,6 +25,7 @@ export function ConnectionsWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [showImport, setShowImport] = useState(false);
+  const [showIntegrations, setShowIntegrations] = useState(false);
 
   const load = useCallback(async () => {
     const params = new URLSearchParams();
@@ -114,8 +116,15 @@ export function ConnectionsWorkspace({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => setShowImport(true)}
+            onClick={() => setShowIntegrations(true)}
             className="rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-deep"
+          >
+            Auto-sync setup
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowImport(true)}
+            className="rounded-md border border-line bg-white px-4 py-2.5 text-sm font-semibold text-ink-soft hover:border-accent hover:text-accent"
           >
             Import CSV
           </button>
@@ -215,15 +224,15 @@ export function ConnectionsWorkspace({
             <div className="flex min-h-[420px] flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-white/60 px-6 text-center">
               <p className="font-serif text-2xl text-ink">No connection selected</p>
               <p className="mt-2 max-w-sm text-sm text-muted">
-                Import your LinkedIn Connections.csv, or add someone manually to
-                start organizing.
+                Connect PhantomBuster or Dux-Soup for auto-sync, import a CSV, or
+                add someone manually.
               </p>
               <button
                 type="button"
-                onClick={() => setShowImport(true)}
+                onClick={() => setShowIntegrations(true)}
                 className="mt-5 rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-deep"
               >
-                Import Connections.csv
+                Auto-sync setup
               </button>
             </div>
           )}
@@ -241,6 +250,10 @@ export function ConnectionsWorkspace({
             await load();
           }}
         />
+      ) : null}
+
+      {showIntegrations ? (
+        <IntegrationsPanel onClose={() => setShowIntegrations(false)} />
       ) : null}
     </main>
   );

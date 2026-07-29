@@ -25,6 +25,24 @@ After deploy, add this LinkedIn redirect URL in your app **Auth** settings:
 
 `https://linkkeep-psi.vercel.app/api/auth/callback/linkedin`
 
+## Auto-sync (PhantomBuster / Dux-Soup)
+
+LinkedIn does not allow apps to read your connection list via OAuth. For ongoing updates, connect a browser-automation tool’s webhook to LinkKeep:
+
+1. Sign in to https://linkkeep-psi.vercel.app/dashboard
+2. Click **Auto-sync setup**
+3. Copy the PhantomBuster or Dux-Soup webhook URL
+
+### PhantomBuster
+- Use [LinkedIn Connections Export](https://phantombuster.com/automations/linkedin/12670/linkedin-connections-export)
+- Paste webhook URL under Advanced → Webhooks
+- Schedule the Phantom (daily/weekly) so LinkKeep stays updated
+
+### Dux-Soup (Turbo/Cloud)
+- Options → Connect → Webhooks → paste URL
+- Enable **Visit** + **Scan**
+- Scan or visit connections in LinkedIn; 1st-degree profiles stream into LinkKeep
+
 ## Setup
 
 ```bash

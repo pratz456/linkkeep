@@ -84,5 +84,9 @@ export async function ensureDb() {
   await sql`CREATE INDEX IF NOT EXISTS connections_userId_idx ON connections("userId")`;
   await sql`CREATE INDEX IF NOT EXISTS connections_status_idx ON connections(status)`;
 
+  // Additive migration for existing Neon DBs
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS "webhookToken" TEXT`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS users_webhookToken_uidx ON users("webhookToken")`;
+
   bootstrapped = true;
 }

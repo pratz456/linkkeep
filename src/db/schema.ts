@@ -16,6 +16,7 @@ export const users = pgTable("users", {
   email: text("email").unique(),
   emailVerified: timestamp("emailVerified", { mode: "date" }),
   image: text("image"),
+  webhookToken: text("webhookToken").unique(),
 });
 
 export const accounts = pgTable(
@@ -83,7 +84,9 @@ export const connections = pgTable("connections", {
     .notNull()
     .default("active"),
   lastContactedAt: text("lastContactedAt"),
-  source: text("source", { enum: ["csv", "api", "manual"] })
+  source: text("source", {
+    enum: ["csv", "api", "manual", "duxsoup", "phantombuster"],
+  })
     .notNull()
     .default("manual"),
   createdAt: timestamp("createdAt", { mode: "string" }).defaultNow().notNull(),
