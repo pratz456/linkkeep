@@ -15,6 +15,16 @@ The Connections API (`r_1st_connections`) requires LinkedIn partner approval. Li
 2. **Imports** people from LinkedIn’s official **Connections.csv** data export
 3. **Optionally tries** API sync if you later get partner access (will return a clear 403 otherwise)
 
+## Live deployment
+
+- App: https://linkkeep-psi.vercel.app
+- Repo: https://github.com/pratz456/linkkeep
+- Database: Neon Postgres
+
+After deploy, add this LinkedIn redirect URL in your app **Auth** settings:
+
+`https://linkkeep-psi.vercel.app/api/auth/callback/linkedin`
+
 ## Setup
 
 ```bash
