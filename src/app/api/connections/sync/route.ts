@@ -55,7 +55,7 @@ export async function POST() {
           lastName: item.lastName,
           position: item.headline ?? existing[0].position,
           source: "api",
-          updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+          updatedAt: new Date().toISOString(),
         })
         .where(eq(connections.id, existing[0].id));
       updated += 1;

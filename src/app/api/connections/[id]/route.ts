@@ -61,7 +61,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   const data = parsed.data;
   const updates: Record<string, unknown> = {
-    updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+    updatedAt: new Date().toISOString(),
   };
 
   if (data.firstName !== undefined) updates.firstName = data.firstName;

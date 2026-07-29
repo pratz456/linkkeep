@@ -1,23 +1,24 @@
-import { relations, sql } from "drizzle-orm";
+import { relations } from "drizzle-orm";
 import {
   integer,
+  pgTable,
   primaryKey,
-  sqliteTable,
   text,
-} from "drizzle-orm/sqlite-core";
+  timestamp,
+} from "drizzle-orm/pg-core";
 import type { AdapterAccountType } from "next-auth/adapters";
 
-export const users = sqliteTable("users", {
+export const users = pgTable("users", {
   id: text("id")
     .primaryKey()
     .$defaultFn(() => crypto.randomUUID()),
   name: text("name"),
   email: text("email").unique(),
-  emailVerified: integer("emailVerified", { mode: "timestamp_ms" }),
+  emailVerified: timestamp("emailVerified", { mode: "date" }),
   image: text("image"),
 });
 
-export const accounts = sqliteTable(
+export const accounts = pgTable(
   "accounts",
   {
     userId: text("userId")
@@ -41,25 +42,25 @@ export const accounts = sqliteTable(
   ],
 );
 
-export const sessions = sqliteTable("sessions", {
+export const sessions = pgTable("sessions", {
   sessionToken: text("sessionToken").primaryKey(),
   userId: text("userId")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  expires: integer("expires", { mode: "timestamp_ms" }).notNull(),
+  expires: timestamp("expires", { mode: "date" }).notNull(),
 });
 
-export const verificationTokens = sqliteTable(
+export const verificationTokens = pgTable(
   "verificationTokens",
   {
     identifier: text("identifier").notNull(),
     token: text("token").notNull(),
-    expires: integer("expires", { mode: "timestamp_ms" }).notNull(),
+    expires: timestamp("expires", { mode: "date" }).notNull(),
   },
   (vt) => [primaryKey({ columns: [vt.identifier, vt.token] })],
 );
 
-export const connections = sqliteTable("connections", {
+export const connections = pgTable("connections", {
   id: text("id")
     .primaryKey()
     .$defaultFn(() => crypto.randomUUID()),
@@ -85,12 +86,8 @@ export const connections = sqliteTable("connections", {
   source: text("source", { enum: ["csv", "api", "manual"] })
     .notNull()
     .default("manual"),
-  createdAt: text("createdAt")
-    .notNull()
-    .default(sql`(datetime('now'))`),
-  updatedAt: text("updatedAt")
-    .notNull()
-    .default(sql`(datetime('now'))`),
+  createdAt: timestamp("createdAt", { mode: "string" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "string" }).defaultNow().notNull(),
 });
 
 export const usersRelations = relations(users, ({ many }) => ({

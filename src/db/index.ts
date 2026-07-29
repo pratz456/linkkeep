@@ -1,41 +1,36 @@
-import { createClient } from "@libsql/client";
-import { drizzle } from "drizzle-orm/libsql";
-import fs from "fs";
-import path from "path";
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "./schema";
 
-function resolveUrl() {
-  if (process.env.TURSO_DATABASE_URL) {
-    return process.env.TURSO_DATABASE_URL;
-  }
-
-  const dataDir = path.join(process.cwd(), "data");
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-  return `file:${path.join(dataDir, "app.db")}`;
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  throw new Error("DATABASE_URL is not set");
 }
 
-const client = createClient({
-  url: resolveUrl(),
-  authToken: process.env.TURSO_AUTH_TOKEN,
-});
+const sql = neon(databaseUrl);
+export const db = drizzle(sql, { schema });
 
-async function bootstrap() {
-  await client.executeMultiple(`
+let bootstrapped = false;
+
+export async function ensureDb() {
+  if (bootstrapped) return;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       name TEXT,
       email TEXT UNIQUE,
-      emailVerified INTEGER,
+      "emailVerified" TIMESTAMPTZ,
       image TEXT
-    );
+    )
+  `;
 
+  await sql`
     CREATE TABLE IF NOT EXISTS accounts (
-      userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "userId" TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       type TEXT NOT NULL,
       provider TEXT NOT NULL,
-      providerAccountId TEXT NOT NULL,
+      "providerAccountId" TEXT NOT NULL,
       refresh_token TEXT,
       access_token TEXT,
       expires_at INTEGER,
@@ -43,54 +38,51 @@ async function bootstrap() {
       scope TEXT,
       id_token TEXT,
       session_state TEXT,
-      PRIMARY KEY (provider, providerAccountId)
-    );
+      PRIMARY KEY (provider, "providerAccountId")
+    )
+  `;
 
+  await sql`
     CREATE TABLE IF NOT EXISTS sessions (
-      sessionToken TEXT PRIMARY KEY,
-      userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      expires INTEGER NOT NULL
-    );
+      "sessionToken" TEXT PRIMARY KEY,
+      "userId" TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires TIMESTAMPTZ NOT NULL
+    )
+  `;
 
-    CREATE TABLE IF NOT EXISTS verificationTokens (
+  await sql`
+    CREATE TABLE IF NOT EXISTS "verificationTokens" (
       identifier TEXT NOT NULL,
       token TEXT NOT NULL,
-      expires INTEGER NOT NULL,
+      expires TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (identifier, token)
-    );
+    )
+  `;
 
+  await sql`
     CREATE TABLE IF NOT EXISTS connections (
       id TEXT PRIMARY KEY,
-      userId TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      linkedinId TEXT,
-      firstName TEXT NOT NULL,
-      lastName TEXT NOT NULL DEFAULT '',
+      "userId" TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      "linkedinId" TEXT,
+      "firstName" TEXT NOT NULL,
+      "lastName" TEXT NOT NULL DEFAULT '',
       email TEXT,
       company TEXT,
       position TEXT,
-      connectedOn TEXT,
-      profileUrl TEXT,
+      "connectedOn" TEXT,
+      "profileUrl" TEXT,
       tags TEXT NOT NULL DEFAULT '[]',
       notes TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'active',
-      lastContactedAt TEXT,
+      "lastContactedAt" TEXT,
       source TEXT NOT NULL DEFAULT 'manual',
-      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
-      updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
-    );
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 
-    CREATE INDEX IF NOT EXISTS connections_userId_idx ON connections(userId);
-    CREATE INDEX IF NOT EXISTS connections_status_idx ON connections(status);
-  `);
-}
+  await sql`CREATE INDEX IF NOT EXISTS connections_userId_idx ON connections("userId")`;
+  await sql`CREATE INDEX IF NOT EXISTS connections_status_idx ON connections(status)`;
 
-const ready = bootstrap().catch((error) => {
-  console.error("Failed to bootstrap database schema", error);
-  throw error;
-});
-
-export const db = drizzle(client, { schema });
-
-export async function ensureDb() {
-  await ready;
+  bootstrapped = true;
 }

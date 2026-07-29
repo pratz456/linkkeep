@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
           profileUrl: row.profileUrl ?? existing[0].profileUrl,
           email: row.email ?? existing[0].email,
           source: "csv",
-          updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19),
+          updatedAt: new Date().toISOString(),
         })
         .where(eq(connections.id, existing[0].id));
       updated += 1;
