@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #0b1f33;
+  --ink-soft: #243b53;
+  --muted: #627d98;
+  --paper: #f4f7fb;
+  --paper-2: #e8eef6;
+  --line: #d9e2ec;
+  --accent: #0a66c2;
+  --accent-deep: #004182;
+  --warm: #c27a2d;
+  --success: #1f7a4d;
+  --danger: #b42318;
+  --background: var(--paper);
+  --foreground: var(--ink);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-muted: var(--muted);
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-deep: var(--accent-deep);
+  --color-warm: var(--warm);
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-outfit);
+  --font-serif: var(--font-source-serif);
+}
+
+body {
+  background:
+    radial-gradient(ellipse 80% 50% at 10% -10%, #cfe0f5 0%, transparent 55%),
+    radial-gradient(ellipse 60% 40% at 100% 0%, #d7e8f7 0%, transparent 45%),
+    linear-gradient(180deg, #f7fafc 0%, #eef3f8 100%);
+  color: var(--foreground);
+  font-family: var(--font-outfit), system-ui, sans-serif;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.animate-rise {
+  animation: rise 0.7s ease-out both;
+}
+
+.animate-fade {
+  animation: fade-in 0.8s ease-out both;
+}
+
+.animate-drift {
+  animation: drift 6s ease-in-out infinite;
+}
