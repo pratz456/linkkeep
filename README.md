@@ -1,102 +1,57 @@
-# LinkKeep
+# Morrow
 
-Manage your LinkedIn connections locally: sign in with LinkedIn, import Connections.csv, then organize people with tags, notes, status, and follow-up dates.
+Morrow is a calm, connector-ready work-life dashboard. It turns changing context
+into prioritized views for today, this week, and this month while keeping major
+outcomes visibly separate from smaller commitments.
 
-## Important LinkedIn API limitation
+## MVP behavior
 
-LinkedIn **does not** let standard developer apps read your connection list. Self-serve OAuth only covers:
+- Prioritizes open commitments by importance, due date, and supporting context
+- Keeps work, personal, and wellbeing commitments in one filterable workspace
+- Shows schedule shape, protected focus time, effort, and completion progress
+- Supports search, task completion, task details, and manual task capture
+- Persists manual tasks and completion state in the current browser
+- Ships with an explicitly labeled sample workspace for product evaluation
 
-- Sign In (`openid`, `profile`, `email`)
-- Share on LinkedIn (`w_member_social`)
+## Connector honesty
 
-The Connections API (`r_1st_connections`) requires LinkedIn partner approval. LinkKeep therefore:
+The preview does **not** claim live access to Gmail, Slack, Google Calendar, or
+Granola. Source status comes from a server-only connector boundary and the UI
+labels all demonstration context as sample data.
 
-1. **Connects** your account with Sign In with LinkedIn
-2. **Imports** people from LinkedIn’s official **Connections.csv** data export
-3. **Optionally tries** API sync if you later get partner access (will return a clear 403 otherwise)
+The connector catalog separates public metadata from server configuration:
 
-## Live deployment
+- `src/lib/connectors/catalog.ts` — safe provider names and capabilities
+- `src/lib/connectors/runtime.ts` — server-only environment access
+- `src/lib/connectors/status.ts` — redacted connection status
+- `src/app/api/connectors/route.ts` — no-store status endpoint
 
-- App: https://linkkeep-psi.vercel.app
-- Repo: https://github.com/pratz456/linkkeep
-- Database: Neon Postgres
+OAuth credentials and provider tokens must remain in encrypted server-side
+storage in a production deployment. Granola remains export-only until an
+approved runtime API or export flow is available. The manual connector is the
+only active input in this MVP.
 
-After deploy, add this LinkedIn redirect URL in your app **Auth** settings:
-
-`https://linkkeep-psi.vercel.app/api/auth/callback/linkedin`
-
-## Auto-sync (PhantomBuster / Dux-Soup)
-
-LinkedIn does not allow apps to read your connection list via OAuth. For ongoing updates, connect a browser-automation tool’s webhook to LinkKeep:
-
-1. Sign in to https://linkkeep-psi.vercel.app/dashboard
-2. Click **Auto-sync setup**
-3. Copy the PhantomBuster or Dux-Soup webhook URL
-
-### PhantomBuster
-- Use [LinkedIn Connections Export](https://phantombuster.com/automations/linkedin/12670/linkedin-connections-export)
-- Paste webhook URL under Advanced → Webhooks
-- Schedule the Phantom (daily/weekly) so LinkKeep stays updated
-
-### Dux-Soup (Turbo/Cloud)
-- Options → Connect → Webhooks → paste URL
-- Enable **Visit** + **Scan**
-- Scan or visit connections in LinkedIn; 1st-degree profiles stream into LinkKeep
-
-## Setup
+## Local development
 
 ```bash
-cd linkedin-connections
-cp .env.example .env.local
 npm install
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
 
-### Without LinkedIn credentials (demo)
-
-Leave `AUTH_LINKEDIN_ID` / `AUTH_LINKEDIN_SECRET` empty and click **Try demo workspace**. You can import CSV and manage connections locally.
-
-### With LinkedIn Sign In
-
-1. Create an app at [linkedin.com/developers/apps](https://www.linkedin.com/developers/apps)
-2. Under **Products**, request **Sign In with LinkedIn using OpenID Connect**
-3. Under **Auth**, add redirect URL:
-   `http://localhost:3000/api/auth/callback/linkedin`
-4. Put Client ID and Client Secret in `.env.local`:
-
-```env
-AUTH_SECRET=any-long-random-string
-AUTH_URL=http://localhost:3000
-AUTH_LINKEDIN_ID=your_client_id
-AUTH_LINKEDIN_SECRET=your_client_secret
-```
-
-5. Restart `npm run dev` and click **Connect LinkedIn**
-
-Generate a secret with:
+## Verification
 
 ```bash
-openssl rand -base64 32
+npm run lint
+npm run typecheck
+npm test
+npm run build
 ```
-
-### Importing connections
-
-1. LinkedIn → **Me** → **Settings & Privacy** → **Data privacy** → **Get a copy of your data**
-2. Select **Connections** only, request the archive
-3. Download and upload `Connections.csv` via **Import CSV** in the dashboard
 
 ## Stack
 
-- Next.js (App Router) + TypeScript
-- Auth.js (NextAuth v5) + LinkedIn OpenID Connect
-- SQLite via Drizzle + better-sqlite3 (stored in `data/app.db`)
-
-## Scripts
-
-| Command        | Description              |
-| -------------- | ------------------------ |
-| `npm run dev`  | Start local server       |
-| `npm run build`| Production build         |
-| `npm run start`| Run production server    |
+- Next.js App Router and React
+- TypeScript
+- CSS Modules
+- Vitest

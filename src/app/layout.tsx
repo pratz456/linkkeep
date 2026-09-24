@@ -1,21 +1,10 @@
 import type { Metadata } from "next";
-import { Outfit, Source_Serif_4 } from "next/font/google";
 import "./globals.css";
 
-const outfit = Outfit({
-  variable: "--font-outfit",
-  subsets: ["latin"],
-});
-
-const sourceSerif = Source_Serif_4({
-  variable: "--font-source-serif",
-  subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
-  title: "LinkKeep — Manage your LinkedIn connections",
+  title: "Morrow — A calm view of what matters",
   description:
-    "Connect your LinkedIn account and organize relationships with notes, tags, and follow-ups.",
+    "A private, connector-ready work-life tracker for prioritizing today, this week, and this month.",
 };
 
 export default function RootLayout({
@@ -24,11 +13,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${outfit.variable} ${sourceSerif.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col font-sans">{children}</body>
+    <html lang="en">
+      <body>{children}</body>
     </html>
   );
 }
