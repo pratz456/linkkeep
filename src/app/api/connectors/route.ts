@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
   let runtimeBlocker: string | null = null;
 
   if (
-    connectorAuthorizationEnabled() &&
+    connectorAuthorizationEnabled(request) &&
     databaseConfigured &&
     getSessionSecret()
   ) {

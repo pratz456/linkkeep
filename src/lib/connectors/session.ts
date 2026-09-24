@@ -4,6 +4,10 @@ import type { NextRequest, NextResponse } from "next/server";
 import { databaseConfigured } from "@/db";
 import type { OAuthConnectorId } from "@/lib/connectors/providers";
 import {
+  isAllowedConnectorRequestOrigin,
+  isConnectorDevelopmentEnvironment,
+} from "@/lib/connectors/environment-policy";
+import {
   createWorkspaceSession,
   readWorkspaceSession,
 } from "@/lib/connectors/security";
@@ -16,11 +20,14 @@ function isProduction() {
   return process.env.NODE_ENV === "production";
 }
 
-export function connectorAuthorizationEnabled() {
-  return (
-    !isProduction() &&
-    process.env.WORKLIFE_ENABLE_CONNECTOR_AUTHORIZATION === "true"
-  );
+export function connectorAuthorizationEnabled(request?: NextRequest) {
+  if (!isConnectorDevelopmentEnvironment(process.env)) return false;
+  return request
+    ? isAllowedConnectorRequestOrigin(
+        request.nextUrl.origin,
+        process.env.WORKLIFE_APP_URL,
+      )
+    : true;
 }
 
 function cookiePrefix() {
@@ -42,13 +49,13 @@ export function getSessionSecret() {
 
 export function getAppOrigin(request: NextRequest) {
   const configured = process.env.WORKLIFE_APP_URL?.trim();
-  if (!configured) return request.nextUrl.origin;
-  try {
-    const url = new URL(configured);
-    return url.origin;
-  } catch {
-    return request.nextUrl.origin;
+  if (
+    !configured ||
+    !isAllowedConnectorRequestOrigin(request.nextUrl.origin, configured)
+  ) {
+    throw new Error("Connector application origin is not an allowed loopback.");
   }
+  return new URL(configured).origin;
 }
 
 export function getConnectorRedirectUri(

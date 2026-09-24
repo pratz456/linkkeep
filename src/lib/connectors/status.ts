@@ -1,5 +1,7 @@
 import { CONNECTOR_CATALOG } from "@/lib/connectors/catalog";
+import { isConnectorDevelopmentEnvironment } from "@/lib/connectors/environment-policy";
 import { parseEncryptionKey } from "@/lib/connectors/security";
+import { resolveProviderScopes } from "@/lib/connectors/scope-policy";
 import type {
   ConnectorId,
   PublicConnectorState,
@@ -108,8 +110,10 @@ export function resolveConnectorStates(
       ...globalRequirements,
       ...(oauthRequirements[connector.id] ?? []),
     ];
+    const developmentEnabled =
+      isConnectorDevelopmentEnvironment(environment);
     const blockers =
-      environment.NODE_ENV === "production"
+      !developmentEnabled
         ? [...requirements]
         : requirements.filter((key) => !environment[key]?.trim());
 
@@ -143,15 +147,33 @@ export function resolveConnectorStates(
         "WORKLIFE_GOOGLE_PICKER_API_KEY (selected-file Picker flow)",
       );
     }
-    if (environment.NODE_ENV === "production") {
-      blockers.push(
-        "Production identity, tenant isolation, KMS encryption, verified webhooks, and deletion controls",
-      );
-    } else if (
-      environment.WORKLIFE_ENABLE_CONNECTOR_AUTHORIZATION !== "true"
+    if (
+      (connector.id === "gmail" ||
+        connector.id === "calendar" ||
+        connector.id === "drive") &&
+      !resolveProviderScopes(
+        connector.id,
+        environment[`WORKLIFE_${connector.id.toUpperCase()}_SCOPES`],
+      )
     ) {
       blockers.push(
-        "WORKLIFE_ENABLE_CONNECTOR_AUTHORIZATION=true (development only)",
+        `${connector.label} scopes exceed the code-enforced read-only maximum`,
+      );
+    }
+    if (
+      connector.id === "slack" &&
+      !resolveProviderScopes(
+        "slack",
+        environment.WORKLIFE_SLACK_BOT_SCOPES,
+      )
+    ) {
+      blockers.push(
+        "Slack scopes exceed the code-enforced selected-channel bot maximum",
+      );
+    }
+    if (!developmentEnabled) {
+      blockers.push(
+        "Loopback development environment only; production/staging identity, tenant isolation, KMS encryption, verified webhooks, and deletion controls remain required",
       );
     }
 
@@ -172,28 +194,17 @@ export function resolveConnectorStates(
     }
 
     if (account) {
-      const isLive = Boolean(account.lastSyncedAt);
-      const workerConfigured = Boolean(
-        environment.WORKLIFE_SYNC_DISPATCH_URL?.trim(),
-      );
       return {
         ...base,
-        status: isLive ? ("connected" as const) : ("authorized" as const),
-        statusLabel: isLive
-          ? "Live"
-          : workerConfigured
-            ? "Authorized · queued"
-            : "Authorized · worker needed",
-        detail: isLive
-          ? "Authorization is stored server-side and this source has completed a sync."
-          : "Authorization is stored server-side. No ingestion has completed, so this source is not marked live.",
+        status: "authorized" as const,
+        statusLabel: "Authorized · worker needed",
+        detail:
+          "Authorization is stored server-side. No verified worker is bundled, so this source is not marked live.",
         setupUrl: `/api/connectors/${connector.id}/authorize`,
         lastSyncedAt: account.lastSyncedAt,
         accountLabel: account.accountLabel,
         blockers: [
-          ...(workerConfigured
-            ? []
-            : ["Durable sync worker (Inngest, Trigger.dev, or equivalent)"]),
+          "Verified durable sync worker with authenticated capability handshake",
           "Provider revocation and derived-data deletion workflow",
         ],
       };

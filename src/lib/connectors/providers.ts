@@ -2,6 +2,7 @@ import "server-only";
 
 import type { ConnectorId } from "@/lib/workspace/types";
 import { compareGrantedScopes } from "@/lib/connectors/security";
+import { resolveProviderScopes } from "@/lib/connectors/scope-policy";
 
 export type OAuthConnectorId =
   | "gmail"
@@ -41,29 +42,6 @@ const oauthConnectorIds: OAuthConnectorId[] = [
   "notion",
 ];
 
-const googleScopes: Record<
-  Extract<OAuthConnectorId, "gmail" | "calendar" | "drive">,
-  string[]
-> = {
-  gmail: ["https://www.googleapis.com/auth/gmail.metadata"],
-  calendar: [
-    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
-    "https://www.googleapis.com/auth/calendar.events.readonly",
-  ],
-  drive: ["https://www.googleapis.com/auth/drive.file"],
-};
-
-function scopesFromEnvironment(
-  value: string | undefined,
-  fallback: string[],
-) {
-  if (!value?.trim()) return fallback;
-  return value
-    .split(/[\s,]+/)
-    .map((scope) => scope.trim())
-    .filter(Boolean);
-}
-
 export function isOAuthConnectorId(
   value: string | ConnectorId,
 ): value is OAuthConnectorId {
@@ -81,7 +59,11 @@ export function getOAuthProviderConfig(
   ) {
     const clientId = environment.WORKLIFE_GOOGLE_CLIENT_ID?.trim();
     const clientSecret = environment.WORKLIFE_GOOGLE_CLIENT_SECRET?.trim();
-    if (!clientId || !clientSecret) return null;
+    const scopes = resolveProviderScopes(
+      provider,
+      environment[`WORKLIFE_${provider.toUpperCase()}_SCOPES`],
+    );
+    if (!clientId || !clientSecret || !scopes) return null;
     return {
       id: provider,
       clientId,
@@ -92,10 +74,7 @@ export function getOAuthProviderConfig(
       tokenUrl:
         environment.WORKLIFE_GOOGLE_TOKEN_URL?.trim() ||
         "https://oauth2.googleapis.com/token",
-      scopes: scopesFromEnvironment(
-        environment[`WORKLIFE_${provider.toUpperCase()}_SCOPES`],
-        [...googleScopes[provider]],
-      ),
+      scopes,
       usePkce: true,
     };
   }
@@ -103,7 +82,11 @@ export function getOAuthProviderConfig(
   if (provider === "slack") {
     const clientId = environment.WORKLIFE_SLACK_CLIENT_ID?.trim();
     const clientSecret = environment.WORKLIFE_SLACK_CLIENT_SECRET?.trim();
-    if (!clientId || !clientSecret) return null;
+    const scopes = resolveProviderScopes(
+      "slack",
+      environment.WORKLIFE_SLACK_BOT_SCOPES,
+    );
+    if (!clientId || !clientSecret || !scopes) return null;
     return {
       id: provider,
       clientId,
@@ -114,16 +97,7 @@ export function getOAuthProviderConfig(
       tokenUrl:
         environment.WORKLIFE_SLACK_TOKEN_URL?.trim() ||
         "https://slack.com/api/oauth.v2.access",
-      scopes: scopesFromEnvironment(
-        environment.WORKLIFE_SLACK_BOT_SCOPES,
-        [
-          "channels:read",
-          "channels:history",
-          "groups:read",
-          "groups:history",
-          "users:read",
-        ],
-      ),
+      scopes,
       usePkce: false,
     };
   }

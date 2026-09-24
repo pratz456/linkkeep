@@ -17,7 +17,7 @@ export async function DELETE(
   if (!isOAuthConnectorId(provider)) {
     return NextResponse.json({ error: "Unknown connector." }, { status: 404 });
   }
-  if (!connectorAuthorizationEnabled()) {
+  if (!connectorAuthorizationEnabled(request)) {
     return NextResponse.json(
       { error: "Connector authorization is disabled." },
       { status: 503 },

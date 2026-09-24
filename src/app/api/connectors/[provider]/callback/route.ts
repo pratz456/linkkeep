@@ -4,6 +4,7 @@ import {
   getOAuthProviderConfig,
   isOAuthConnectorId,
 } from "@/lib/connectors/providers";
+import { safeReturnUrl } from "@/lib/connectors/redirect-policy";
 import {
   encryptSecret,
   readOAuthTransaction,
@@ -37,7 +38,7 @@ export async function GET(
       { status: 404 },
     );
   }
-  if (!connectorAuthorizationEnabled()) {
+  if (!connectorAuthorizationEnabled(request)) {
     return NextResponse.json(
       { error: "Connector authorization is disabled." },
       { status: 503 },
@@ -175,7 +176,7 @@ function finishWithStatus(
   returnTo: string,
   error: string | null,
 ) {
-  const destination = new URL(returnTo, getAppOrigin(request));
+  const destination = safeReturnUrl(returnTo, getAppOrigin(request));
   if (error) {
     destination.searchParams.set("connector_error", error);
     destination.searchParams.set("connector", provider);

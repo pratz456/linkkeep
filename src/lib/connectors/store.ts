@@ -12,6 +12,7 @@ import {
 import type { ConnectorAccountSummary } from "@/lib/connectors/status";
 import type { OAuthConnectorId } from "@/lib/connectors/providers";
 import { hashOAuthState } from "@/lib/connectors/security";
+import { canPreserveRefreshToken } from "@/lib/connectors/credential-policy";
 
 export async function ensureWorkspace(workspaceId: string) {
   await ensureConnectorDb();
@@ -80,11 +81,23 @@ export async function saveConnectorAccount(input: {
   await ensureConnectorDb();
   const existing = await getConnectorAccount(input.workspaceId, input.provider);
   const now = new Date().toISOString();
+  const preserveExistingRefreshToken =
+    !input.refreshTokenEncrypted &&
+    existing &&
+    canPreserveRefreshToken({
+      existingExternalAccountId: existing.externalAccountId,
+      nextExternalAccountId: input.externalAccountId,
+      existingScope: existing.scope,
+      nextScope: input.scope,
+    });
   const values = {
     id: existing?.id ?? crypto.randomUUID(),
     ...input,
     refreshTokenEncrypted:
-      input.refreshTokenEncrypted ?? existing?.refreshTokenEncrypted ?? null,
+      input.refreshTokenEncrypted ??
+      (preserveExistingRefreshToken
+        ? (existing?.refreshTokenEncrypted ?? null)
+        : null),
     keyVersion:
       process.env.CONNECTOR_ENCRYPTION_KEY_VERSION?.trim() || "local-v1",
     tokenGeneration: (existing?.tokenGeneration ?? 0) + 1,

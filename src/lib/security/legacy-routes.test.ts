@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { unstable_doesProxyMatch } from "next/experimental/testing/server";
+import { config } from "@/proxy";
 import {
   LEGACY_ROUTE_PREFIXES,
   isLegacyRoute,
@@ -13,8 +15,15 @@ describe("legacy route release gate", () => {
     "/api/integrations",
     "/api/webhooks/duxsoup",
     "/api/webhooks/phantombuster",
-  ])("unconditionally disables %s", (pathname) => {
+  ])("unconditionally disables and matches %s", (pathname) => {
     expect(isLegacyRoute(pathname)).toBe(true);
+    expect(
+      unstable_doesProxyMatch({
+        config,
+        nextConfig: {},
+        url: pathname,
+      }),
+    ).toBe(true);
   });
 
   it.each([
@@ -23,6 +32,13 @@ describe("legacy route release gate", () => {
     "/api/connectors/gmail/authorize",
   ])("does not block intended route %s", (pathname) => {
     expect(isLegacyRoute(pathname)).toBe(false);
+    expect(
+      unstable_doesProxyMatch({
+        config,
+        nextConfig: {},
+        url: pathname,
+      }),
+    ).toBe(false);
   });
 
   it("keeps the release gate inventory explicit", () => {

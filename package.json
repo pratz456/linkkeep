@@ -37,10 +37,21 @@
     "typescript": "^5",
     "vitest": "^5.0.1"
   },
+  "overrides": {
+    "@esbuild-kit/core-utils": {
+      "esbuild": "0.25.12"
+    },
+    "js-yaml": "4.3.2",
+    "minimatch@3.1.5": {
+      "brace-expansion": "1.1.21"
+    },
+    "minimatch@10.2.6": {
+      "brace-expansion": "5.0.12"
+    }
+  },
   "allowScripts": {
-    "esbuild@0.18.20": true,
     "esbuild@0.25.12": true,
-    "esbuild@0.28.1": true,
+    "esbuild@0.28.2": true,
     "better-sqlite3@13.0.2": true,
     "sharp@0.34.5": true,
     "unrs-resolver@1.12.2": true

@@ -10,6 +10,7 @@ import {
   createPkcePair,
   getOAuthExpiry,
 } from "@/lib/connectors/security";
+import { safeReturnPath } from "@/lib/connectors/redirect-policy";
 import {
   ensureWorkspaceSession,
   connectorAuthorizationEnabled,
@@ -34,7 +35,7 @@ export async function GET(
       { status: 404 },
     );
   }
-  if (!connectorAuthorizationEnabled()) {
+  if (!connectorAuthorizationEnabled(request)) {
     return NextResponse.json(
       {
         error:
@@ -109,8 +110,4 @@ export async function GET(
       { status: 503 },
     );
   }
-}
-
-function safeReturnPath(value: string | null) {
-  return value?.startsWith("/") && !value.startsWith("//") ? value : "/";
 }

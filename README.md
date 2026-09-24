@@ -42,11 +42,12 @@ The connector catalog separates public metadata from server configuration:
 - `src/app/api/connectors/[provider]/*` — authorize, callback, and local-delete
   seams
 
-Authorization routes are deliberately disabled in production and require
-`WORKLIFE_ENABLE_CONNECTOR_AUTHORIZATION=true` in development. Client
+Authorization routes fail closed in every non-local environment, including
+staging. They require `NODE_ENV=development`, an exact loopback
+`WORKLIFE_APP_URL`, and `WORKLIFE_ENABLE_CONNECTOR_AUTHORIZATION=true`. Client
 credentials are never called “connected”; a source becomes **Authorized** only
-after a valid state-bound callback stores an encrypted token, and becomes
-**Live** only after a durable worker records a successful sync.
+after a valid state-bound callback stores an encrypted token. This repository
+never marks a source **Live** because no verified worker is bundled.
 
 Current provider constraints:
 
@@ -74,10 +75,12 @@ encryption and rotation, verified provider webhooks, an isolated durable worker,
 remote revocation plus derived-data deletion, retention/audit controls, and a
 nonce/hash CSP. The checked-in AES key seam is for local development only.
 
-Connector content is normalized into bounded, plain-text, explicitly
-`untrusted_connector_content` records. No LLM is called. Future model work must
-keep source text out of system instructions and expose no network or mutation
-tools without deterministic re-authorization and human confirmation.
+Connector content is rejected above a 16 KiB ingress ceiling, validated against
+typed identifiers and provider-specific HTTPS host allowlists, then normalized
+into bounded, plain-text, explicitly `untrusted_connector_content` records. No
+LLM is called. Future model work must keep source text out of system
+instructions and expose no network or mutation tools without deterministic
+re-authorization and human confirmation.
 
 Manual preview tasks use namespaced browser storage. They should not contain
 sensitive work data; the Sources panel includes a clear-local-workspace action.

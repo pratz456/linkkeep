@@ -5,6 +5,7 @@ describe("resolveConnectorStates", () => {
   it("returns only redacted connector metadata", () => {
     const secret = "do-not-leak-this-secret";
     const connectors = resolveConnectorStates({
+      NODE_ENV: "development",
       DATABASE_URL: "postgres://configured",
       WORKLIFE_APP_URL: "http://localhost:3000",
       WORKLIFE_ENABLE_CONNECTOR_AUTHORIZATION: "true",
@@ -43,8 +44,30 @@ describe("resolveConnectorStates", () => {
     ).toBe(true);
   });
 
-  it("separates saved authorization from a completed live sync", () => {
+  it("surfaces overbroad configured scopes as a setup blocker", () => {
+    const slack = resolveConnectorStates({
+      NODE_ENV: "development",
+      DATABASE_URL: "postgres://configured",
+      WORKLIFE_APP_URL: "http://localhost:3000",
+      WORKLIFE_ENABLE_CONNECTOR_AUTHORIZATION: "true",
+      WORKLIFE_SESSION_SECRET:
+        "a-session-secret-that-is-at-least-32-characters",
+      CONNECTOR_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
+      WORKLIFE_SLACK_CLIENT_ID: "client-id",
+      WORKLIFE_SLACK_CLIENT_SECRET: "client-secret",
+      WORKLIFE_SLACK_SIGNING_SECRET: "signing-secret",
+      WORKLIFE_SLACK_BOT_SCOPES: "channels:read,chat:write",
+    }).find((connector) => connector.id === "slack");
+
+    expect(slack?.status).toBe("needs_setup");
+    expect(slack?.blockers).toContain(
+      "Slack scopes exceed the code-enforced selected-channel bot maximum",
+    );
+  });
+
+  it("never promotes stored authorization to live without a verified worker", () => {
     const environment = {
+      NODE_ENV: "development",
       DATABASE_URL: "postgres://configured",
       WORKLIFE_APP_URL: "http://localhost:3000",
       WORKLIFE_ENABLE_CONNECTOR_AUTHORIZATION: "true",
@@ -64,7 +87,7 @@ describe("resolveConnectorStates", () => {
         lastSyncedAt: null,
       },
     ]).find((connector) => connector.id === "slack");
-    const live = resolveConnectorStates(environment, [
+    const previouslySynced = resolveConnectorStates(environment, [
       {
         provider: "slack",
         accountLabel: "Example workspace",
@@ -74,12 +97,17 @@ describe("resolveConnectorStates", () => {
     ]).find((connector) => connector.id === "slack");
 
     expect(authorized?.status).toBe("authorized");
-    expect(live?.status).toBe("connected");
+    expect(previouslySynced?.status).toBe("authorized");
+    expect(previouslySynced?.blockers).toContain(
+      "Verified durable sync worker with authenticated capability handshake",
+    );
   });
 
-  it("never advertises production readiness before security gates exist", () => {
+  it.each(["production", "staging", "test"])(
+    "never advertises readiness in NODE_ENV=%s",
+    (nodeEnv) => {
     const gmail = resolveConnectorStates({
-      NODE_ENV: "production",
+      NODE_ENV: nodeEnv,
       DATABASE_URL: "postgres://configured",
       WORKLIFE_APP_URL: "https://morrow.example",
       WORKLIFE_SESSION_SECRET:
@@ -94,7 +122,8 @@ describe("resolveConnectorStates", () => {
     expect(gmail?.status).toBe("needs_setup");
     expect(gmail?.setupUrl).toBeNull();
     expect(gmail?.blockers).toContain(
-      "Production identity, tenant isolation, KMS encryption, verified webhooks, and deletion controls",
+      "Loopback development environment only; production/staging identity, tenant isolation, KMS encryption, verified webhooks, and deletion controls remain required",
     );
-  });
+    },
+  );
 });
