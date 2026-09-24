@@ -68,23 +68,30 @@ test.describe("Morrow dashboard interactions", () => {
     ).toBeVisible();
   });
 
-  test("history and Clear filters keep URL and state synchronized", async ({
-    page,
-  }) => {
+  test("Back restores the root Today horizon", async ({ page }) => {
     await resetWorkspace(page);
     await page.getByRole("button", { name: "Week", exact: true }).click();
     await page.getByRole("button", { name: "Month", exact: true }).click();
-    await page.goBack();
+    await page.evaluate(() => window.history.back());
+    await expect(page).toHaveURL(/horizon=week/);
     await expect(
       page.getByRole("button", { name: "Week", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
-    await page.goBack();
+    await page.evaluate(() => window.history.back());
     await expect(page).toHaveURL(/\/$/);
     await expect(
       page.getByRole("button", { name: "Day", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
+  });
 
-    await page.getByRole("button", { name: "Work", exact: true }).click();
+  test("Clear filters keeps URL and restored state synchronized", async ({
+    page,
+  }) => {
+    await resetWorkspace(page);
+    await page
+      .getByRole("navigation", { name: "Work areas" })
+      .getByRole("button", { name: /Work/ })
+      .click();
     await page
       .getByRole("textbox", { name: "Search work, people, and messages" })
       .fill("no-result-query");

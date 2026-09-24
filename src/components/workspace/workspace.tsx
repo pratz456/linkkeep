@@ -933,7 +933,7 @@ export function Workspace({
           type="button"
           className={styles.mobileOverlay}
           onClick={() => setMobileNavOpen(false)}
-          aria-label="Close navigation"
+          aria-label="Dismiss navigation backdrop"
           tabIndex={-1}
         />
       ) : null}
@@ -2028,7 +2028,7 @@ function TaskDrawer({
         type="button"
         className={styles.backdrop}
         onClick={onClose}
-        aria-label="Close task details"
+        aria-label="Dismiss task details backdrop"
       />
       <aside
         ref={drawerRef}
@@ -2212,7 +2212,7 @@ function SourcesDrawer({
         type="button"
         className={styles.backdrop}
         onClick={onClose}
-        aria-label="Close sources"
+        aria-label="Dismiss sources backdrop"
       />
       <aside
         ref={drawerRef}
@@ -2384,7 +2384,7 @@ function PlanTodayDialog({
         type="button"
         className={styles.backdrop}
         onClick={onClose}
-        aria-label="Close plan today dialog"
+        aria-label="Dismiss plan today dialog backdrop"
       />
       <div
         ref={modalRef}
@@ -2462,7 +2462,7 @@ function AddTaskDialog({
         type="button"
         className={styles.backdrop}
         onClick={onClose}
-        aria-label="Close add task dialog"
+        aria-label="Dismiss add task dialog backdrop"
       />
       <div
         ref={modalRef}
