@@ -435,6 +435,7 @@ export function createDemoWorkspace(now = new Date()): WorkspaceSnapshot {
     schedule,
     followUps,
     generatedAt: now.toISOString(),
+    timeZone: "UTC",
     isSample: true,
   };
 }

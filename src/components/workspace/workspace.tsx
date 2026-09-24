@@ -990,7 +990,9 @@ export function Workspace({
               </p>
             </div>
             <div className={styles.headingDate}>
-              <span>{formatHorizonRange(horizon, now)}</span>
+              <span>
+                {formatHorizonRange(horizon, now)} · {initialSnapshot.timeZone}
+              </span>
               <div className={styles.horizonTabs} aria-label="Change time range">
                 {(["today", "week", "month"] as const).map((item) => (
                   <button
@@ -2098,17 +2100,17 @@ function SourcesDrawer({
                     <span key={capability}>{capability}</span>
                   ))}
                 </div>
+                {connector.callbackPath ? (
+                  <p className={styles.callbackPath}>
+                    Callback path: <code>{connector.callbackPath}</code>
+                  </p>
+                ) : null}
                 {connector.blockers.length ? (
                   <div className={styles.blockerList}>
                     <strong>Configuration needed</strong>
                     {connector.blockers.map((blocker) => (
                       <code key={blocker}>{blocker}</code>
                     ))}
-                    {connector.callbackPath ? (
-                      <span>
-                        Callback path: <code>{connector.callbackPath}</code>
-                      </span>
-                    ) : null}
                   </div>
                 ) : null}
                 {connector.setupUrl || connector.accountLabel ? (

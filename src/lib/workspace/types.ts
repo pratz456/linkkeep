@@ -106,6 +106,7 @@ export interface WorkspaceSnapshot {
   schedule: ScheduleItem[];
   followUps: FollowUp[];
   generatedAt: string;
+  timeZone: string;
   isSample: boolean;
 }
 

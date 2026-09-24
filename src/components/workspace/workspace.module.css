@@ -2812,6 +2812,16 @@
   padding-left: 9px;
 }
 
+.callbackPath {
+  overflow-wrap: anywhere;
+  color: #77817c !important;
+  font-size: 10px !important;
+}
+
+.callbackPath code {
+  font-size: inherit;
+}
+
 .blockerList strong,
 .blockerList span {
   color: #7b674e;
@@ -3279,6 +3289,17 @@
   .completeButton,
   .drawerHeader > button,
   .modalHeader > button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .followUpList button,
+  .nextMeetingCard > button,
+  .focusSuggestion button,
+  .activeFocus button,
+  .connectorActions a,
+  .connectorActions button,
+  .localDataControls button {
     min-width: 44px;
     min-height: 44px;
   }
