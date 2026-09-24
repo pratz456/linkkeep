@@ -12,8 +12,8 @@ describe("resolveConnectorStates", () => {
       WORKLIFE_SESSION_SECRET:
         "a-session-secret-that-is-at-least-32-characters",
       CONNECTOR_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-      WORKLIFE_GOOGLE_CLIENT_ID: "client-id",
-      WORKLIFE_GOOGLE_CLIENT_SECRET: secret,
+      WORKLIFE_GMAIL_CLIENT_ID: "client-id",
+      WORKLIFE_GMAIL_CLIENT_SECRET: secret,
       WORKLIFE_GMAIL_VERIFICATION_STATUS: "approved",
     });
     const gmail = connectors.find((connector) => connector.id === "gmail");
@@ -23,7 +23,7 @@ describe("resolveConnectorStates", () => {
     expect(gmail?.setupUrl).toBe("/api/connectors/gmail/authorize");
     expect(JSON.stringify(connectors)).not.toContain(secret);
     expect(JSON.stringify(connectors)).not.toContain(
-      "WORKLIFE_GOOGLE_CLIENT_SECRET",
+      "WORKLIFE_GMAIL_CLIENT_SECRET",
     );
   });
 
@@ -113,8 +113,8 @@ describe("resolveConnectorStates", () => {
       WORKLIFE_SESSION_SECRET:
         "a-session-secret-that-is-at-least-32-characters",
       CONNECTOR_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
-      WORKLIFE_GOOGLE_CLIENT_ID: "client-id",
-      WORKLIFE_GOOGLE_CLIENT_SECRET: "client-secret",
+      WORKLIFE_GMAIL_CLIENT_ID: "client-id",
+      WORKLIFE_GMAIL_CLIENT_SECRET: "client-secret",
       WORKLIFE_GMAIL_VERIFICATION_STATUS: "approved",
       WORKLIFE_ENABLE_CONNECTOR_AUTHORIZATION: "true",
     }).find((connector) => connector.id === "gmail");

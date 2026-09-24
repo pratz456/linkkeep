@@ -51,6 +51,9 @@ never marks a source **Live** because no verified worker is bundled.
 
 Current provider constraints:
 
+- Gmail, Calendar, and Drive use separate OAuth clients so each stored grant has
+  an exact connector-specific scope set; shared incremental Google grants are
+  intentionally unsupported.
 - Gmail remains setup-blocked until restricted-scope verification/security
   review is explicitly marked approved. The default seam asks only for
   `gmail.metadata`.
@@ -118,8 +121,10 @@ isolated service with per-account leases and provider-specific verification.
 ```bash
 npm run lint
 npm run typecheck
-npm test
+TZ=UTC npm test
+TZ=America/Los_Angeles npm test
 npm run build
+npm run test:e2e
 ```
 
 ## Stack
@@ -128,3 +133,4 @@ npm run build
 - TypeScript
 - CSS Modules
 - Vitest
+- Playwright

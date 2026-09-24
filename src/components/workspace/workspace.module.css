@@ -13,6 +13,7 @@
   --coral: #dc6345;
   --coral-soft: #fae7df;
   min-height: 100vh;
+  overflow-x: clip;
   background: var(--paper);
   color: var(--ink);
 }
@@ -297,6 +298,7 @@
 }
 
 .appColumn {
+  min-width: 0;
   min-height: 100vh;
   margin-left: var(--sidebar-width);
 }
@@ -742,6 +744,13 @@
   margin-top: 17px;
 }
 
+.contentGrid > *,
+.rightRail,
+.rightRail > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .mobileNextMeeting {
   display: none;
 }
@@ -976,6 +985,8 @@
 }
 
 .majorFooter {
+  z-index: 4;
+  pointer-events: none;
   margin-top: 12px;
   border-top: 1px solid #e4e4dd;
   padding-top: 11px;
@@ -1018,6 +1029,7 @@
   font: inherit;
   font-size: 8px;
   font-weight: 690;
+  pointer-events: auto;
 }
 
 .majorCardFeatured .completeButton {
@@ -2337,6 +2349,84 @@
   color: white;
 }
 
+.planningDialogBody {
+  padding: 18px 22px;
+}
+
+.planningDialogBody > p {
+  margin: 0 0 12px;
+  color: #64716a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.planningList {
+  overflow: hidden;
+  border: 1px solid #e0e2db;
+  border-radius: 10px;
+  background: white;
+}
+
+.planningList article {
+  display: grid;
+  min-height: 62px;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #ecece7;
+  padding: 8px 10px;
+}
+
+.planningList article:last-child {
+  border-bottom: 0;
+}
+
+.planningList article > span {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 50%;
+  background: #edf2ee;
+  color: #4d675b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.planningList strong,
+.planningList small {
+  display: block;
+}
+
+.planningList strong {
+  color: #3f4c46;
+  font-size: 13px;
+}
+
+.planningList small {
+  margin-top: 3px;
+  color: #65716b;
+  font-size: 11px;
+}
+
+.planningList em {
+  color: #527261;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.planningList button {
+  min-height: 36px;
+  border: 1px solid #dadfd7;
+  border-radius: 7px;
+  background: #f9faf7;
+  color: #59675f;
+  padding: 0 9px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .toastRegion {
   position: fixed;
   z-index: 140;
@@ -2346,6 +2436,7 @@
 }
 
 .toast {
+  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -3012,6 +3103,18 @@
   color: #c2d1cb;
 }
 
+.horizonTabs button,
+.sourceMark,
+.sourceMarkSmall,
+.sourceSummary small,
+.profileRow small,
+.metricContent p,
+.metricContent small,
+.reviewSources,
+.scheduleFooter {
+  font-size: 10px;
+}
+
 .navItem:focus-visible,
 .areaItem:focus-visible,
 .sourceSummary:focus-visible,
@@ -3128,7 +3231,7 @@
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 1180px) {
   .shell {
     --sidebar-width: 0px;
   }

@@ -227,14 +227,14 @@ export function projectTask(task: WorkTask, now: Date): RankedWorkItem {
   );
 
   const primaryHorizon = getPrimaryHorizon(task, now);
-  const scheduleFit =
+  const quickDuration =
     primaryHorizon === "today" && task.estimateMinutes <= 30 ? 2 : 0;
   pushFactor(
     factors,
-    "schedule_fit",
-    scheduleFit,
-    7,
-    scheduleFit ? "Fits a short open block" : "No confirmed focus block",
+    "short_duration",
+    quickDuration,
+    2,
+    quickDuration ? "Short task (30 minutes or less)" : "Longer work block",
     1,
     sourceIds,
   );
@@ -480,6 +480,22 @@ export function scheduleForHorizon(
       (a, b) =>
         new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
     );
+}
+
+export function nextMeetingForSchedule(
+  schedule: ScheduleItem[],
+  now: Date,
+) {
+  return [...schedule]
+    .filter(
+      (item) =>
+        item.kind === "meeting" &&
+        new Date(item.endAt).getTime() >= now.getTime(),
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
+    )[0];
 }
 
 export function groupByImportance(tasks: WorkTask[]) {

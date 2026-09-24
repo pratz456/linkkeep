@@ -14,6 +14,7 @@ import {
   getHorizonEnd,
   getHorizonStart,
   groupByImportance,
+  nextMeetingForSchedule,
   prioritizeTasks,
   projectTask,
   scheduleForHorizon,
@@ -89,11 +90,18 @@ interface SavedWorkspace {
     deferredUntil: string | null;
     completedAt: string | null;
   }>;
+  followUpOverrides?: Array<{
+    id: string;
+    status: FollowUp["status"];
+  }>;
 }
 
-interface UndoMutation {
+interface ToastState {
+  message: string;
+  undo?: {
   task: WorkTask;
   message: string;
+  };
 }
 
 interface ActiveFocus {
@@ -110,9 +118,8 @@ export function Workspace({
   initialSnapshot,
   initialConnectors,
 }: WorkspaceProps) {
-  const now = useMemo(
+  const [now, setNow] = useState(
     () => new Date(initialSnapshot.generatedAt),
-    [initialSnapshot.generatedAt],
   );
   const [tasks, setTasks] = useState(initialSnapshot.tasks);
   const [connectors, setConnectors] = useState(initialConnectors);
@@ -125,17 +132,34 @@ export function Workspace({
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [addTaskOpen, setAddTaskOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [planningOpen, setPlanningOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [checkedAt, setCheckedAt] = useState(initialSnapshot.generatedAt);
-  const [toast, setToast] = useState<string | null>(null);
-  const [undoMutation, setUndoMutation] = useState<UndoMutation | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [followUps, setFollowUps] = useState<FollowUp[]>(
     initialSnapshot.followUps,
   );
   const [activeFocus, setActiveFocus] = useState<ActiveFocus | null>(null);
   const [focusClock, setFocusClock] = useState(() => Date.now());
   const searchRef = useRef<HTMLInputElement>(null);
+  const mobileNavRef = useRef<HTMLElement>(null);
+  const attentionRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const updateClock = () => setNow(new Date());
+    const interval = window.setInterval(updateClock, 30_000);
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") updateClock();
+    };
+    window.addEventListener("focus", updateClock);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", updateClock);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, []);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -154,6 +178,9 @@ export function Workspace({
           const sampleOverrides = Array.isArray(parsed.sampleOverrides)
             ? parsed.sampleOverrides.filter(isStoredSampleOverride)
             : [];
+          const followUpOverrides = Array.isArray(parsed.followUpOverrides)
+            ? parsed.followUpOverrides.filter(isStoredFollowUpOverride)
+            : [];
 
           setTasks([
             ...initialSnapshot.tasks.map((task) => {
@@ -167,6 +194,14 @@ export function Workspace({
             }),
             ...customTasks,
           ]);
+          setFollowUps(
+            initialSnapshot.followUps.map((followUp) => {
+              const override = followUpOverrides.find(
+                (candidate) => candidate.id === followUp.id,
+              );
+              return override ? { ...followUp, ...override } : followUp;
+            }),
+          );
         }
 
         const storedFocus = window.localStorage.getItem(FOCUS_STORAGE_KEY);
@@ -189,7 +224,7 @@ export function Workspace({
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [initialSnapshot.tasks]);
+  }, [initialSnapshot.followUps, initialSnapshot.tasks]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -214,6 +249,7 @@ export function Workspace({
         searchRef.current?.blur();
         setAddTaskOpen(false);
         setSourcesOpen(false);
+        setPlanningOpen(false);
         setSelectedTaskId(null);
         setMobileNavOpen(false);
       }
@@ -224,6 +260,44 @@ export function Workspace({
   }, []);
 
   useEffect(() => {
+    if (!mobileNavOpen) return;
+    const drawer = mobileNavRef.current;
+    const previous = document.activeElement;
+    if (!drawer) return;
+    const selector =
+      'button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const focusable = Array.from(
+      drawer.querySelectorAll<HTMLElement>(selector),
+    );
+    focusable[0]?.focus();
+
+    function containFocus(event: KeyboardEvent) {
+      if (event.key !== "Tab") return;
+      const items = Array.from(
+        drawer?.querySelectorAll<HTMLElement>(selector) ?? [],
+      );
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    drawer.addEventListener("keydown", containFocus);
+    return () => {
+      drawer.removeEventListener("keydown", containFocus);
+      window.requestAnimationFrame(() => {
+        if (previous instanceof HTMLElement) previous.focus();
+      });
+    };
+  }, [mobileNavOpen]);
+
+  useEffect(() => {
     const frame = window.requestAnimationFrame(async () => {
       const url = new URL(window.location.href);
       const connected = url.searchParams.get("connector_connected");
@@ -231,11 +305,11 @@ export function Workspace({
       if (!connected && !connectorError) return;
 
       setSourcesOpen(true);
-      setToast(
-        connected
+      setToast({
+        message: connected
           ? `${sourceNames[connected as ConnectorId] ?? "Connector"} authorization saved`
           : "Connector authorization was not completed",
-      );
+      });
       url.searchParams.delete("connector_connected");
       url.searchParams.delete("connector_error");
       url.searchParams.delete("connector");
@@ -255,7 +329,9 @@ export function Workspace({
             setCheckedAt(payload.checkedAt ?? new Date().toISOString());
           }
         } catch {
-          setToast("Authorization saved; source status could not refresh");
+          setToast({
+            message: "Authorization saved; source status could not refresh",
+          });
         }
       }
     });
@@ -274,6 +350,8 @@ export function Workspace({
         savedHorizon === "month"
       ) {
         setHorizon(savedHorizon);
+      } else {
+        setHorizon("today");
       }
       if (
         savedArea === "Work" ||
@@ -296,10 +374,7 @@ export function Workspace({
 
   useEffect(() => {
     if (!toast) return;
-    const timeout = window.setTimeout(() => {
-      setToast(null);
-      setUndoMutation(null);
-    }, 5000);
+    const timeout = window.setTimeout(() => setToast(null), 5000);
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
@@ -366,12 +441,7 @@ export function Workspace({
         .slice(0, 4),
     [filteredTasks],
   );
-  const nextMeeting =
-    schedule.find(
-      (item) =>
-        item.kind === "meeting" &&
-        new Date(item.endAt).getTime() >= now.getTime(),
-    ) ?? schedule.find((item) => item.kind === "meeting");
+  const nextMeeting = nextMeetingForSchedule(schedule, now);
   const activeFocusTask =
     tasks.find((task) => task.id === activeFocus?.taskId) ?? null;
   const activeFocusMinutes = activeFocus
@@ -405,6 +475,9 @@ export function Workspace({
     0,
   );
   const weekTasks = prioritizeTasks(tasks, "week", now);
+  const todayMajorTasks = groupByImportance(
+    prioritizeTasks(tasks, "today", now),
+  ).major;
   const weekTaskIds = new Set(weekTasks.map((task) => task.id));
   const laterMonthCount = prioritizeTasks(tasks, "month", now).filter(
     (task) => !weekTaskIds.has(task.id),
@@ -416,7 +489,10 @@ export function Workspace({
   const authorizedCount = connectors.filter(
     (connector) => connector.status === "authorized",
   ).length;
-  const dialogOpen = Boolean(selectedTask || sourcesOpen || addTaskOpen);
+  const dialogOpen = Boolean(
+    selectedTask || sourcesOpen || addTaskOpen || planningOpen,
+  );
+  const backgroundInert = dialogOpen || mobileNavOpen;
   const openFollowUps = followUps
     .filter((followUp) => followUp.status === "open")
     .sort((a, b) => {
@@ -434,7 +510,10 @@ export function Workspace({
     );
   }, [openTasks]);
 
-  function persist(nextTasks: WorkTask[]) {
+  function persist(
+    nextTasks: WorkTask[],
+    nextFollowUps: FollowUp[] = followUps,
+  ) {
     const saved: SavedWorkspace = {
       completedIds: nextTasks
         .filter((task) => task.isSample && task.status === "completed")
@@ -449,8 +528,16 @@ export function Workspace({
           deferredUntil: task.deferredUntil ?? null,
           completedAt: task.completedAt ?? null,
         })),
+      followUpOverrides: nextFollowUps.map((followUp) => ({
+        id: followUp.id,
+        status: followUp.status,
+      })),
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+  }
+
+  function notify(message: string, undo?: ToastState["undo"]) {
+    setToast({ message, undo });
   }
 
   function toggleTask(taskId: string) {
@@ -470,11 +557,8 @@ export function Workspace({
       persist(next);
       return next;
     });
-    setUndoMutation({
-      task: previous,
-      message: completing ? "Task completed" : "Task restored",
-    });
-    setToast(completing ? "Task completed" : "Task restored");
+    const message = completing ? "Task completed" : "Task restored";
+    notify(message, { task: previous, message });
   }
 
   function deferTask(taskId: string) {
@@ -497,21 +581,47 @@ export function Workspace({
       persist(next);
       return next;
     });
-    setUndoMutation({ task: previous, message: "Task deferred" });
-    setToast("Moved to tomorrow");
+    notify("Moved to tomorrow", { task: previous, message: "Task deferred" });
   }
 
-  function undoLastMutation() {
-    if (!undoMutation) return;
+  function moveTaskToMinor(taskId: string) {
+    const previous = tasks.find((task) => task.id === taskId);
+    if (!previous) return;
     setTasks((current) => {
       const next = current.map((task) =>
-        task.id === undoMutation.task.id ? undoMutation.task : task,
+        task.id === taskId
+          ? {
+              ...task,
+              importance: "minor" as const,
+              priority: {
+                ...task.priority,
+                impactLevel: 1 as const,
+                impactConfidence: 1,
+                lastUserTouchAt: new Date().toISOString(),
+              },
+            }
+          : task,
       );
       persist(next);
       return next;
     });
-    setToast(`${undoMutation.message} undone`);
-    setUndoMutation(null);
+    notify("Moved to Quick actions", {
+      task: previous,
+      message: "Importance change",
+    });
+  }
+
+  function undoLastMutation() {
+    if (!toast?.undo) return;
+    const undo = toast.undo;
+    setTasks((current) => {
+      const next = current.map((task) =>
+        task.id === undo.task.id ? undo.task : task,
+      );
+      persist(next);
+      return next;
+    });
+    notify(`${undo.message} undone`);
   }
 
   function startFocus(taskId: string) {
@@ -536,24 +646,26 @@ export function Workspace({
     setActiveFocus(focus);
     window.localStorage.setItem(FOCUS_STORAGE_KEY, JSON.stringify(focus));
     setFocusClock(Date.now());
-    setToast("Focus session started");
+    notify("Focus session started");
   }
 
   function endFocus() {
     setActiveFocus(null);
     window.localStorage.removeItem(FOCUS_STORAGE_KEY);
-    setToast("Focus session ended");
+    notify("Focus session ended");
   }
 
   function completeFollowUp(followUpId: string) {
-    setFollowUps((current) =>
-      current.map((followUp) =>
+    setFollowUps((current) => {
+      const next = current.map((followUp) =>
         followUp.id === followUpId
           ? { ...followUp, status: "completed" as const }
           : followUp,
-      ),
-    );
-    setToast("Follow-up marked complete");
+      );
+      persist(tasks, next);
+      return next;
+    });
+    notify("Follow-up marked complete");
   }
 
   function clearLocalWorkspace() {
@@ -569,8 +681,7 @@ export function Workspace({
     setTasks(initialSnapshot.tasks);
     setFollowUps(initialSnapshot.followUps);
     setActiveFocus(null);
-    setUndoMutation(null);
-    setToast("Local workspace cleared");
+    notify("Local workspace cleared");
   }
 
   function addTask(event: FormEvent<HTMLFormElement>) {
@@ -620,7 +731,7 @@ export function Workspace({
     event.currentTarget.reset();
     setAddTaskOpen(false);
     setSelectedTaskId(task.id);
-    setToast("Task added to your local workspace");
+    notify("Task added to your local workspace");
   }
 
   async function refreshConnectors() {
@@ -635,9 +746,9 @@ export function Workspace({
       if (!Array.isArray(payload.connectors)) throw new Error("invalid response");
       setConnectors(payload.connectors);
       setCheckedAt(payload.checkedAt ?? new Date().toISOString());
-      setToast("Source status refreshed");
+      notify("Source status refreshed");
     } catch {
-      setToast("Could not refresh source status");
+      notify("Could not refresh source status");
     } finally {
       setRefreshing(false);
     }
@@ -657,10 +768,10 @@ export function Workspace({
         headers: { Accept: "application/json" },
       });
       if (!response.ok) throw new Error("disconnect failed");
-      setToast(`${sourceNames[connectorId]} disconnected`);
+      notify(`${sourceNames[connectorId]} disconnected`);
       await refreshConnectors();
     } catch {
-      setToast(`${sourceNames[connectorId]} could not be disconnected`);
+      notify(`${sourceNames[connectorId]} could not be disconnected`);
     }
   }
 
@@ -696,12 +807,15 @@ export function Workspace({
       </a>
 
       <aside
+        ref={mobileNavRef}
         className={`${styles.sidebar} ${
           mobileNavOpen ? styles.sidebarOpen : ""
         }`}
         aria-label="Workspace navigation"
         aria-hidden={dialogOpen || undefined}
         inert={dialogOpen || undefined}
+        role={mobileNavOpen ? "dialog" : undefined}
+        aria-modal={mobileNavOpen || undefined}
       >
         <div className={styles.brandRow}>
           <div className={styles.brandMark} aria-hidden="true">
@@ -820,13 +934,14 @@ export function Workspace({
           className={styles.mobileOverlay}
           onClick={() => setMobileNavOpen(false)}
           aria-label="Close navigation"
+          tabIndex={-1}
         />
       ) : null}
 
       <div
         className={styles.appColumn}
-        aria-hidden={dialogOpen || undefined}
-        inert={dialogOpen || undefined}
+        aria-hidden={backgroundInert || undefined}
+        inert={backgroundInert || undefined}
       >
         <header className={styles.topbar}>
           <button
@@ -842,6 +957,8 @@ export function Workspace({
           <label className={styles.search}>
             <Icon name="search" size={17} />
             <input
+              id="global-search"
+              name="globalSearch"
               ref={searchRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -919,7 +1036,7 @@ export function Workspace({
                     aria-selected="false"
                     onClick={() => {
                       setSearchOpen(false);
-                      setToast(
+                      notify(
                         "People detail is not available in the sample workspace",
                       );
                     }}
@@ -1059,7 +1176,7 @@ export function Workspace({
                 meeting={nextMeeting}
                 now={now}
                 onOpen={() =>
-                  setToast("Sample meeting has no live calendar link")
+                  notify("Sample meeting has no live calendar link")
                 }
               />
             </div>
@@ -1092,19 +1209,30 @@ export function Workspace({
                     ))}
                   </div>
 
-                  {groupedTasks.major.length > 3 ? (
+                  {horizon === "today" &&
+                  area === "All" &&
+                  !query &&
+                  todayMajorTasks.length > 3 ? (
                     <div className={styles.planningWarning} role="status">
                       <Icon name="target" size={16} />
                       <span>
-                        {groupedTasks.major.length} items are marked major.
+                        {todayMajorTasks.length} items are marked major.
                         Choose the top three before adding more to Today.
                       </span>
-                      <button type="button">Plan today</button>
+                      <button
+                        type="button"
+                        onClick={() => setPlanningOpen(true)}
+                      >
+                        Plan today
+                      </button>
                     </div>
                   ) : null}
 
                   {attentionSignals.length ? (
-                    <div className={styles.attentionSection}>
+                    <div
+                      ref={attentionRef}
+                      className={styles.attentionSection}
+                    >
                       <div className={styles.minorHeading}>
                         <div>
                           <span className={styles.attentionMarker} />
@@ -1190,7 +1318,7 @@ export function Workspace({
                   hasQuery={Boolean(query || area !== "All")}
                   onClear={() => {
                     setQuery("");
-                    setArea("All");
+                    selectArea("All");
                   }}
                   onAdd={() => setAddTaskOpen(true)}
                 />
@@ -1248,7 +1376,7 @@ export function Workspace({
                     meeting={nextMeeting}
                     now={now}
                     onOpen={() =>
-                      setToast("Sample meeting has no live calendar link")
+                      notify("Sample meeting has no live calendar link")
                     }
                   />
                 ) : null}
@@ -1457,8 +1585,8 @@ export function Workspace({
       <nav
         className={styles.mobileBottomNav}
         aria-label="Mobile navigation"
-        aria-hidden={dialogOpen || undefined}
-        inert={dialogOpen || undefined}
+        aria-hidden={backgroundInert || undefined}
+        inert={backgroundInert || undefined}
       >
         <button
           type="button"
@@ -1468,9 +1596,20 @@ export function Workspace({
           <Icon name="sun" size={19} />
           <span>Today</span>
         </button>
-        <button type="button" onClick={() => searchRef.current?.focus()}>
+        <button
+          type="button"
+          onClick={() => {
+            selectHorizon("today");
+            window.requestAnimationFrame(() =>
+              attentionRef.current?.scrollIntoView({
+                behavior: "smooth",
+                block: "start",
+              }),
+            );
+          }}
+        >
           <Icon name="inbox" size={19} />
-          <span>Inbox</span>
+          <span>Signals</span>
         </button>
         <button type="button" onClick={() => searchRef.current?.focus()}>
           <Icon name="search" size={19} />
@@ -1514,14 +1653,22 @@ export function Workspace({
         />
       ) : null}
 
+      {planningOpen ? (
+        <PlanTodayDialog
+          tasks={todayMajorTasks}
+          onMoveToMinor={moveTaskToMinor}
+          onClose={() => setPlanningOpen(false)}
+        />
+      ) : null}
+
       <div className={styles.toastRegion} aria-live="polite" aria-atomic="true">
         {toast ? (
           <div className={styles.toast}>
             <span>
               <Icon name="check" size={14} />
             </span>
-            <p>{toast}</p>
-            {undoMutation ? (
+            <p>{toast.message}</p>
+            {toast.undo ? (
               <button type="button" onClick={undoLastMutation}>
                 Undo
               </button>
@@ -2220,6 +2367,84 @@ function SourcesDrawer({
   );
 }
 
+function PlanTodayDialog({
+  tasks,
+  onMoveToMinor,
+  onClose,
+}: {
+  tasks: WorkTask[];
+  onMoveToMinor: (taskId: string) => void;
+  onClose: () => void;
+}) {
+  const modalRef = useDialogFocus<HTMLDivElement>(onClose);
+
+  return (
+    <div className={`${styles.overlayLayer} ${styles.modalLayer}`}>
+      <button
+        type="button"
+        className={styles.backdrop}
+        onClick={onClose}
+        aria-label="Close plan today dialog"
+      />
+      <div
+        ref={modalRef}
+        className={styles.modal}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="plan-today-title"
+      >
+        <div className={styles.modalHeader}>
+          <div>
+            <p>Today planning</p>
+            <h2 id="plan-today-title">Choose your top three</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close dialog">
+            <Icon name="close" />
+          </button>
+        </div>
+        <div className={styles.planningDialogBody}>
+          <p>
+            Morrow keeps three major outcomes visible. Move the extras into
+            Quick actions; you can undo each change.
+          </p>
+          <div className={styles.planningList}>
+            {tasks.map((task, index) => (
+              <article key={task.id}>
+                <span>{index + 1}</span>
+                <div>
+                  <strong>{task.title}</strong>
+                  <small>
+                    {task.project} · {formatDuration(task.estimateMinutes)}
+                  </small>
+                </div>
+                {index < 3 ? (
+                  <em>Top three</em>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onMoveToMinor(task.id)}
+                  >
+                    Move to Quick actions
+                  </button>
+                )}
+              </article>
+            ))}
+          </div>
+        </div>
+        <div className={styles.drawerFooter}>
+          <button
+            type="button"
+            className={styles.drawerPrimary}
+            onClick={onClose}
+          >
+            Done planning
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AddTaskDialog({
   now,
   onClose,
@@ -2538,5 +2763,18 @@ function isStoredSampleOverride(
     (override.deferredUntil === null ||
       typeof override.deferredUntil === "string") &&
     (override.completedAt === null || typeof override.completedAt === "string")
+  );
+}
+
+function isStoredFollowUpOverride(
+  value: unknown,
+): value is NonNullable<SavedWorkspace["followUpOverrides"]>[number] {
+  if (!value || typeof value !== "object") return false;
+  const override = value as Record<string, unknown>;
+  return (
+    typeof override.id === "string" &&
+    (override.status === "open" ||
+      override.status === "completed" ||
+      override.status === "snoozed")
   );
 }

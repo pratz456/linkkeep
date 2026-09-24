@@ -3,6 +3,7 @@ export type ScopedConnectorId =
   | "calendar"
   | "drive"
   | "slack";
+export type GoogleConnectorId = Exclude<ScopedConnectorId, "slack">;
 
 const SCOPE_POLICY: Record<
   ScopedConnectorId,
@@ -88,4 +89,14 @@ export function resolveGrantedScopes(
   }
 
   return null;
+}
+
+export function resolveGoogleClientCredentials(
+  provider: GoogleConnectorId,
+  environment: Readonly<Record<string, string | undefined>>,
+) {
+  const prefix = `WORKLIFE_${provider.toUpperCase()}`;
+  const clientId = environment[`${prefix}_CLIENT_ID`]?.trim();
+  const clientSecret = environment[`${prefix}_CLIENT_SECRET`]?.trim();
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
 }

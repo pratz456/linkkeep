@@ -4,6 +4,7 @@ import type { ConnectorId } from "@/lib/workspace/types";
 import { compareGrantedScopes } from "@/lib/connectors/security";
 import {
   resolveGrantedScopes,
+  resolveGoogleClientCredentials,
   resolveProviderScopes,
 } from "@/lib/connectors/scope-policy";
 
@@ -60,17 +61,16 @@ export function getOAuthProviderConfig(
     provider === "calendar" ||
     provider === "drive"
   ) {
-    const clientId = environment.WORKLIFE_GOOGLE_CLIENT_ID?.trim();
-    const clientSecret = environment.WORKLIFE_GOOGLE_CLIENT_SECRET?.trim();
+    const credentials = resolveGoogleClientCredentials(provider, environment);
     const scopes = resolveProviderScopes(
       provider,
       environment[`WORKLIFE_${provider.toUpperCase()}_SCOPES`],
     );
-    if (!clientId || !clientSecret || !scopes) return null;
+    if (!credentials || !scopes) return null;
     return {
       id: provider,
-      clientId,
-      clientSecret,
+      clientId: credentials.clientId,
+      clientSecret: credentials.clientSecret,
       authorizationUrl:
         environment.WORKLIFE_GOOGLE_AUTHORIZATION_URL?.trim() ||
         "https://accounts.google.com/o/oauth2/v2/auth",
@@ -147,7 +147,6 @@ export function buildAuthorizationUrl({
   } else {
     url.searchParams.set("scope", config.scopes.join(" "));
     url.searchParams.set("access_type", "offline");
-    url.searchParams.set("include_granted_scopes", "true");
     url.searchParams.set("prompt", "consent");
     if (codeChallenge) {
       url.searchParams.set("code_challenge", codeChallenge);

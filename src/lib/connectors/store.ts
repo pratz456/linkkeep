@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { db, ensureConnectorDb } from "@/db";
 import {
   connectorAccounts,
@@ -106,7 +106,7 @@ export async function saveConnectorAccount(input: {
     updatedAt: now,
   };
 
-  await db
+  const persisted = await db
     .insert(connectorAccounts)
     .values(values)
     .onConflictDoUpdate({
@@ -129,9 +129,133 @@ export async function saveConnectorAccount(input: {
         lastSyncedAt: null,
         updatedAt: values.updatedAt,
       },
-    });
+    })
+    .returning({ id: connectorAccounts.id });
 
-  return values.id;
+  if (!persisted[0]) {
+    throw new Error("Connector account upsert returned no persisted row.");
+  }
+  return persisted[0].id;
+}
+
+export async function saveConnectorAccountWithInitialJob(input: {
+  workspaceId: string;
+  provider: OAuthConnectorId;
+  externalAccountId: string | null;
+  accountLabel: string | null;
+  accessTokenEncrypted: string;
+  refreshTokenEncrypted: string | null;
+  tokenType: string | null;
+  scope: string | null;
+  expiresAt: string | null;
+  metadataJson: string;
+  idempotencyKey: string;
+  payload: Record<string, unknown>;
+}) {
+  await ensureConnectorDb();
+  const now = new Date().toISOString();
+  const accountId = crypto.randomUUID();
+  const jobId = crypto.randomUUID();
+  const keyVersion =
+    process.env.CONNECTOR_ENCRYPTION_KEY_VERSION?.trim() || "local-v1";
+  const result = await db.execute<{ id: string }>(sql`
+    WITH upserted AS (
+      INSERT INTO "connectorAccounts" (
+        id,
+        "workspaceId",
+        provider,
+        "externalAccountId",
+        "accountLabel",
+        "accessTokenEncrypted",
+        "refreshTokenEncrypted",
+        "keyVersion",
+        "tokenGeneration",
+        "tokenType",
+        scope,
+        "expiresAt",
+        "metadataJson",
+        "authorizedAt",
+        "lastSyncedAt",
+        "updatedAt"
+      )
+      VALUES (
+        ${accountId},
+        ${input.workspaceId},
+        ${input.provider},
+        ${input.externalAccountId},
+        ${input.accountLabel},
+        ${input.accessTokenEncrypted},
+        ${input.refreshTokenEncrypted},
+        ${keyVersion},
+        1,
+        ${input.tokenType},
+        ${input.scope},
+        ${input.expiresAt},
+        ${input.metadataJson},
+        ${now},
+        NULL,
+        ${now}
+      )
+      ON CONFLICT ("workspaceId", provider) DO UPDATE SET
+        "externalAccountId" = EXCLUDED."externalAccountId",
+        "accountLabel" = EXCLUDED."accountLabel",
+        "accessTokenEncrypted" = EXCLUDED."accessTokenEncrypted",
+        "refreshTokenEncrypted" = CASE
+          WHEN EXCLUDED."refreshTokenEncrypted" IS NOT NULL
+            THEN EXCLUDED."refreshTokenEncrypted"
+          WHEN "connectorAccounts"."externalAccountId" IS NOT NULL
+            AND "connectorAccounts"."externalAccountId"
+              IS NOT DISTINCT FROM EXCLUDED."externalAccountId"
+            AND "connectorAccounts".scope IS NOT DISTINCT FROM EXCLUDED.scope
+            THEN "connectorAccounts"."refreshTokenEncrypted"
+          ELSE NULL
+        END,
+        "keyVersion" = EXCLUDED."keyVersion",
+        "tokenGeneration" = "connectorAccounts"."tokenGeneration" + 1,
+        "tokenType" = EXCLUDED."tokenType",
+        scope = EXCLUDED.scope,
+        "expiresAt" = EXCLUDED."expiresAt",
+        "metadataJson" = EXCLUDED."metadataJson",
+        "authorizedAt" = EXCLUDED."authorizedAt",
+        "lastSyncedAt" = NULL,
+        "updatedAt" = EXCLUDED."updatedAt"
+      RETURNING id
+    ),
+    queued AS (
+      INSERT INTO "connectorSyncJobs" (
+        id,
+        "connectorAccountId",
+        "jobType",
+        status,
+        "idempotencyKey",
+        "payloadJson",
+        "attemptCount",
+        "maxAttempts",
+        "runAfter",
+        "updatedAt"
+      )
+      SELECT
+        ${jobId},
+        id,
+        'connector.initial_backfill',
+        'queued',
+        ${input.idempotencyKey},
+        ${JSON.stringify(input.payload)},
+        0,
+        8,
+        ${now},
+        ${now}
+      FROM upserted
+      ON CONFLICT ("idempotencyKey") DO NOTHING
+    )
+    SELECT id FROM upserted
+  `);
+
+  const persistedId = result.rows[0]?.id;
+  if (!persistedId) {
+    throw new Error("Atomic connector persistence returned no account ID.");
+  }
+  return persistedId;
 }
 
 export async function deleteConnectorAccount(

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveGrantedScopes,
+  resolveGoogleClientCredentials,
   resolveProviderScopes,
 } from "@/lib/connectors/scope-policy";
 
@@ -48,6 +49,35 @@ describe("provider scope ceilings", () => {
     });
     expect(
       resolveGrantedScopes("slack", null, ["channels:read"]),
+    ).toBeNull();
+  });
+
+  it("isolates sequential Gmail, Calendar, and Drive grants by OAuth client", () => {
+    const environment = {
+      WORKLIFE_GMAIL_CLIENT_ID: "gmail-client",
+      WORKLIFE_GMAIL_CLIENT_SECRET: "gmail-secret",
+      WORKLIFE_CALENDAR_CLIENT_ID: "calendar-client",
+      WORKLIFE_CALENDAR_CLIENT_SECRET: "calendar-secret",
+      WORKLIFE_DRIVE_CLIENT_ID: "drive-client",
+      WORKLIFE_DRIVE_CLIENT_SECRET: "drive-secret",
+      WORKLIFE_GOOGLE_CLIENT_ID: "legacy-shared-client",
+      WORKLIFE_GOOGLE_CLIENT_SECRET: "legacy-shared-secret",
+    };
+
+    expect(resolveGoogleClientCredentials("gmail", environment)?.clientId).toBe(
+      "gmail-client",
+    );
+    expect(
+      resolveGoogleClientCredentials("calendar", environment)?.clientId,
+    ).toBe("calendar-client");
+    expect(resolveGoogleClientCredentials("drive", environment)?.clientId).toBe(
+      "drive-client",
+    );
+    expect(
+      resolveGoogleClientCredentials("gmail", {
+        WORKLIFE_GOOGLE_CLIENT_ID: "legacy-shared-client",
+        WORKLIFE_GOOGLE_CLIENT_SECRET: "legacy-shared-secret",
+      }),
     ).toBeNull();
   });
 });

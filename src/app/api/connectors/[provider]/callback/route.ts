@@ -21,8 +21,7 @@ import {
 } from "@/lib/connectors/session";
 import {
   consumeOAuthState,
-  enqueueConnectorSyncJob,
-  saveConnectorAccount,
+  saveConnectorAccountWithInitialJob,
 } from "@/lib/connectors/store";
 
 export const dynamic = "force-dynamic";
@@ -120,14 +119,25 @@ export async function GET(
     );
   }
 
+  let tokenSet: Awaited<ReturnType<typeof exchangeAuthorizationCode>>;
   try {
-    const tokenSet = await exchangeAuthorizationCode({
+    tokenSet = await exchangeAuthorizationCode({
       config,
       code,
       redirectUri: transaction.redirectUri,
       verifier: transaction.verifier,
     });
-    const connectorAccountId = await saveConnectorAccount({
+  } catch {
+    return finishWithStatus(
+      request,
+      provider,
+      transaction.returnTo,
+      "authorization_exchange_failed",
+    );
+  }
+
+  try {
+    await saveConnectorAccountWithInitialJob({
       workspaceId: validatedWorkspaceId,
       provider,
       externalAccountId: tokenSet.externalAccountId,
@@ -143,10 +153,6 @@ export async function GET(
       scope: tokenSet.scope,
       expiresAt: tokenSet.expiresAt,
       metadataJson: JSON.stringify(tokenSet.metadata),
-    });
-    await enqueueConnectorSyncJob({
-      connectorAccountId,
-      jobType: "connector.initial_backfill",
       idempotencyKey: `oauth:${provider}:${validatedWorkspaceId}:${transaction.state}`,
       payload: {
         provider,
@@ -165,7 +171,7 @@ export async function GET(
       request,
       provider,
       transaction.returnTo,
-      "authorization_exchange_failed",
+      "authorization_persistence_failed",
     );
   }
 }
