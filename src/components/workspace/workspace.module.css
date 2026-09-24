@@ -3115,6 +3115,33 @@
   font-size: 10px;
 }
 
+.sourceCount,
+.eyebrow,
+.sectionKicker,
+.completeButton,
+.minorTitle small,
+.completedSection > button,
+.completedList button > span:nth-child(2),
+.completedList small,
+.emptyState button,
+.drawerHeader span,
+.detailProject,
+.detailFacts span,
+.evidenceList p,
+.evidenceList time,
+.sampleDisclosure,
+.drawerFooter > p,
+.drawerSecondary,
+.drawerPrimary,
+.modalHeader p,
+.field > span,
+.importanceField legend,
+.importanceField small,
+.localNote,
+.modalActions button {
+  font-size: 11px;
+}
+
 .navItem:focus-visible,
 .areaItem:focus-visible,
 .sourceSummary:focus-visible,

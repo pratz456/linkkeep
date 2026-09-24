@@ -150,7 +150,7 @@ test.describe("Morrow dashboard interactions", () => {
 });
 
 test.describe("responsive and route gates", () => {
-  for (const width of [320, 768, 1024, 1180, 1440]) {
+  for (const width of [320, 640, 768, 1024, 1180, 1440]) {
     test(`has no horizontal overflow at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await resetWorkspace(page);
@@ -163,6 +163,30 @@ test.describe("responsive and route gates", () => {
       );
     });
   }
+
+  test("meaningful visible text is at least 10px", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await resetWorkspace(page);
+    const undersized = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>("body *")]
+        .filter((element) => {
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return (
+            rect.width > 0 &&
+            rect.height > 0 &&
+            element.children.length === 0 &&
+            Boolean(element.textContent?.trim()) &&
+            Number.parseFloat(style.fontSize) < 10
+          );
+        })
+        .map((element) => ({
+          text: element.textContent?.trim().slice(0, 40),
+          fontSize: getComputedStyle(element).fontSize,
+        })),
+    );
+    expect(undersized).toEqual([]);
+  });
 
   test("mobile navigation contains focus and restores it to More", async ({
     page,
