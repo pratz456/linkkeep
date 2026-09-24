@@ -3,33 +3,17 @@ import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "./schema";
 
 const databaseUrl = process.env.DATABASE_URL;
+const unavailableDatabaseUrl =
+  "postgresql://disabled:disabled@unconfigured.invalid/disabled";
 
-function createConfiguredDatabase(url: string) {
-  return drizzle(neon(url), { schema });
-}
-
-type AppDatabase = ReturnType<typeof createConfiguredDatabase>;
-
-function createUnavailableDatabase(): AppDatabase {
-  return new Proxy({} as AppDatabase, {
-    get() {
-      throw new Error(
-        "DATABASE_URL is not configured; legacy connection storage is unavailable.",
-      );
-    },
-  });
-}
-
-const sql = databaseUrl ? neon(databaseUrl) : null;
-export const db = databaseUrl
-  ? createConfiguredDatabase(databaseUrl)
-  : createUnavailableDatabase();
+const sql = neon(databaseUrl ?? unavailableDatabaseUrl);
+export const db = drizzle(sql, { schema });
 
 let bootstrapped = false;
 
 export async function ensureDb() {
   if (bootstrapped) return;
-  if (!sql) {
+  if (!databaseUrl) {
     throw new Error(
       "DATABASE_URL is not configured; legacy connection storage is unavailable.",
     );
