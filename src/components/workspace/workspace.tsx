@@ -521,8 +521,9 @@ export function Workspace({
 
   function startFocus(taskId: string) {
     const task = tasks.find((candidate) => candidate.id === taskId);
+    const startedAt = new Date();
     const minutesUntilMeeting = nextMeeting
-      ? (new Date(nextMeeting.startAt).getTime() - Date.now()) / 60000
+      ? (new Date(nextMeeting.startAt).getTime() - startedAt.getTime()) / 60000
       : Number.POSITIVE_INFINITY;
     if (
       task &&
@@ -537,10 +538,10 @@ export function Workspace({
     ) {
       return;
     }
-    const focus = { taskId, startedAt: new Date().toISOString() };
+    const focus = { taskId, startedAt: startedAt.toISOString() };
     setActiveFocus(focus);
     window.localStorage.setItem(FOCUS_STORAGE_KEY, JSON.stringify(focus));
-    setFocusClock(Date.now());
+    setFocusClock(startedAt.getTime());
     setToast("Focus session started");
   }
 
