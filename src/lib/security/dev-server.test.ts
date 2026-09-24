@@ -21,6 +21,8 @@ describe("development server network boundary", () => {
   it.each([
     ["--hostname", "0.0.0.0"],
     ["-H", "::"],
+    ["-H0.0.0.0"],
+    ["-H=0.0.0.0"],
     ["--hostname=172.30.0.2"],
   ])("rejects hostname override arguments: %s", (...args) => {
     expect(() => validateDevArguments(args)).toThrow(

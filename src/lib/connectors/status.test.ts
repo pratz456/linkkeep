@@ -65,6 +65,27 @@ describe("resolveConnectorStates", () => {
     );
   });
 
+  it("surfaces reused Google OAuth client IDs as a setup blocker", () => {
+    const calendar = resolveConnectorStates({
+      NODE_ENV: "development",
+      DATABASE_URL: "postgres://configured",
+      WORKLIFE_APP_URL: "http://localhost:3000",
+      WORKLIFE_ENABLE_CONNECTOR_AUTHORIZATION: "true",
+      WORKLIFE_SESSION_SECRET:
+        "a-session-secret-that-is-at-least-32-characters",
+      CONNECTOR_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
+      WORKLIFE_GMAIL_CLIENT_ID: "same-client",
+      WORKLIFE_GMAIL_CLIENT_SECRET: "gmail-secret",
+      WORKLIFE_CALENDAR_CLIENT_ID: "same-client",
+      WORKLIFE_CALENDAR_CLIENT_SECRET: "calendar-secret",
+    }).find((connector) => connector.id === "calendar");
+
+    expect(calendar?.status).toBe("needs_setup");
+    expect(calendar?.blockers).toContain(
+      "Google connector OAuth client IDs must be pairwise distinct",
+    );
+  });
+
   it("never promotes stored authorization to live without a verified worker", () => {
     const environment = {
       NODE_ENV: "development",

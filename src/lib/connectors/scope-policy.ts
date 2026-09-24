@@ -95,8 +95,20 @@ export function resolveGoogleClientCredentials(
   provider: GoogleConnectorId,
   environment: Readonly<Record<string, string | undefined>>,
 ) {
+  if (!hasDistinctGoogleClientIds(environment)) return null;
   const prefix = `WORKLIFE_${provider.toUpperCase()}`;
   const clientId = environment[`${prefix}_CLIENT_ID`]?.trim();
   const clientSecret = environment[`${prefix}_CLIENT_SECRET`]?.trim();
   return clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
+export function hasDistinctGoogleClientIds(
+  environment: Readonly<Record<string, string | undefined>>,
+) {
+  const ids = (["GMAIL", "CALENDAR", "DRIVE"] as const)
+    .map((provider) =>
+      environment[`WORKLIFE_${provider}_CLIENT_ID`]?.trim(),
+    )
+    .filter((id): id is string => Boolean(id));
+  return new Set(ids).size === ids.length;
 }

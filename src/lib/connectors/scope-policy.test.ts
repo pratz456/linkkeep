@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  hasDistinctGoogleClientIds,
   resolveGrantedScopes,
   resolveGoogleClientCredentials,
   resolveProviderScopes,
@@ -79,5 +80,19 @@ describe("provider scope ceilings", () => {
         WORKLIFE_GOOGLE_CLIENT_SECRET: "legacy-shared-secret",
       }),
     ).toBeNull();
+    expect(hasDistinctGoogleClientIds(environment)).toBe(true);
+  });
+
+  it("fails closed when provider-specific Google variables reuse a client", () => {
+    const duplicated = {
+      WORKLIFE_GMAIL_CLIENT_ID: "same-client",
+      WORKLIFE_GMAIL_CLIENT_SECRET: "gmail-secret",
+      WORKLIFE_CALENDAR_CLIENT_ID: "same-client",
+      WORKLIFE_CALENDAR_CLIENT_SECRET: "calendar-secret",
+    };
+
+    expect(hasDistinctGoogleClientIds(duplicated)).toBe(false);
+    expect(resolveGoogleClientCredentials("gmail", duplicated)).toBeNull();
+    expect(resolveGoogleClientCredentials("calendar", duplicated)).toBeNull();
   });
 });

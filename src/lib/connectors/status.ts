@@ -1,7 +1,10 @@
 import { CONNECTOR_CATALOG } from "@/lib/connectors/catalog";
 import { isConnectorDevelopmentEnvironment } from "@/lib/connectors/environment-policy";
 import { parseEncryptionKey } from "@/lib/connectors/security";
-import { resolveProviderScopes } from "@/lib/connectors/scope-policy";
+import {
+  hasDistinctGoogleClientIds,
+  resolveProviderScopes,
+} from "@/lib/connectors/scope-policy";
 import type {
   ConnectorId,
   PublicConnectorState,
@@ -161,6 +164,16 @@ export function resolveConnectorStates(
     ) {
       blockers.push(
         `${connector.label} scopes exceed the code-enforced read-only maximum`,
+      );
+    }
+    if (
+      (connector.id === "gmail" ||
+        connector.id === "calendar" ||
+        connector.id === "drive") &&
+      !hasDistinctGoogleClientIds(environment)
+    ) {
+      blockers.push(
+        "Google connector OAuth client IDs must be pairwise distinct",
       );
     }
     if (

@@ -55,8 +55,8 @@ development server.
 Current provider constraints:
 
 - Gmail, Calendar, and Drive use separate OAuth clients so each stored grant has
-  an exact connector-specific scope set; shared incremental Google grants are
-  intentionally unsupported.
+  an exact connector-specific scope set. Client IDs must be pairwise distinct;
+  reused IDs and shared incremental Google grants fail closed.
 - Gmail remains setup-blocked until restricted-scope verification/security
   review is explicitly marked approved. The default seam asks only for
   `gmail.metadata`.

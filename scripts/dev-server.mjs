@@ -6,9 +6,8 @@ export const DEV_HOST = "127.0.0.1";
 export function validateDevArguments(args) {
   const forbidden = args.find(
     (argument) =>
-      argument === "--hostname" ||
-      argument === "-H" ||
-      argument.startsWith("--hostname="),
+      argument.startsWith("--hostname") ||
+      argument.startsWith("-H"),
   );
   if (forbidden) {
     throw new Error(
