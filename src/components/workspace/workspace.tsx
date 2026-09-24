@@ -102,28 +102,34 @@ export function Workspace({
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (!saved) return;
-      const parsed = JSON.parse(saved) as Partial<SavedWorkspace>;
-      const completedIds = Array.isArray(parsed.completedIds)
-        ? parsed.completedIds.filter((id): id is string => typeof id === "string")
-        : [];
-      const customTasks = Array.isArray(parsed.customTasks)
-        ? parsed.customTasks.filter(isStoredTask)
-        : [];
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        const saved = window.localStorage.getItem(STORAGE_KEY);
+        if (!saved) return;
+        const parsed = JSON.parse(saved) as Partial<SavedWorkspace>;
+        const completedIds = Array.isArray(parsed.completedIds)
+          ? parsed.completedIds.filter(
+              (id): id is string => typeof id === "string",
+            )
+          : [];
+        const customTasks = Array.isArray(parsed.customTasks)
+          ? parsed.customTasks.filter(isStoredTask)
+          : [];
 
-      setTasks([
-        ...initialSnapshot.tasks.map((task) =>
-          completedIds.includes(task.id)
-            ? { ...task, status: "completed" as const }
-            : { ...task, status: "open" as const },
-        ),
-        ...customTasks,
-      ]);
-    } catch {
-      window.localStorage.removeItem(STORAGE_KEY);
-    }
+        setTasks([
+          ...initialSnapshot.tasks.map((task) =>
+            completedIds.includes(task.id)
+              ? { ...task, status: "completed" as const }
+              : { ...task, status: "open" as const },
+          ),
+          ...customTasks,
+        ]);
+      } catch {
+        window.localStorage.removeItem(STORAGE_KEY);
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
   }, [initialSnapshot.tasks]);
 
   useEffect(() => {
