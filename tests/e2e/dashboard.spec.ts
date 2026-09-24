@@ -167,25 +167,62 @@ test.describe("responsive and route gates", () => {
   test("meaningful visible text is at least 10px", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await resetWorkspace(page);
-    const undersized = await page.evaluate(() =>
-      [...document.querySelectorAll<HTMLElement>("body *")]
-        .filter((element) => {
-          const style = getComputedStyle(element);
-          const rect = element.getBoundingClientRect();
-          return (
-            rect.width > 0 &&
-            rect.height > 0 &&
-            element.children.length === 0 &&
-            Boolean(element.textContent?.trim()) &&
-            Number.parseFloat(style.fontSize) < 10
-          );
-        })
-        .map((element) => ({
-          text: element.textContent?.trim().slice(0, 40),
-          fontSize: getComputedStyle(element).fontSize,
-        })),
-    );
-    expect(undersized).toEqual([]);
+    const undersizedText = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll<HTMLElement>("body *")]
+          .filter((element) => {
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return (
+              rect.width > 0 &&
+              rect.height > 0 &&
+              element.children.length === 0 &&
+              Boolean(element.textContent?.trim()) &&
+              Number.parseFloat(style.fontSize) < 10
+            );
+          })
+          .map((element) => ({
+            text: element.textContent?.trim().slice(0, 40),
+            fontSize: getComputedStyle(element).fontSize,
+          })),
+      );
+
+    expect(await undersizedText()).toEqual([]);
+    await page.getByRole("button", { name: "Open source health" }).click();
+    expect(await undersizedText()).toEqual([]);
+  });
+
+  test("schedule remains readable with WCAG text spacing", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await resetWorkspace(page);
+    await page.addStyleTag({
+      content: `
+        * {
+          line-height: 1.5 !important;
+          letter-spacing: 0.12em !important;
+          word-spacing: 0.16em !important;
+        }
+      `,
+    });
+
+    const scheduleTitle = page.getByText("Atlas decision · focus block", {
+      exact: true,
+    });
+    await expect(scheduleTitle).toBeVisible();
+    expect(
+      await scheduleTitle.evaluate(
+        (element) =>
+          element.scrollWidth <= element.clientWidth + 1 &&
+          element.scrollHeight <= element.clientHeight + 1,
+      ),
+    ).toBe(true);
+    expect(
+      await page.evaluate(
+        () =>
+          document.documentElement.scrollWidth <=
+          document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
   });
 
   test("mobile navigation contains focus and restores it to More", async ({

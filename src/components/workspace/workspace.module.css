@@ -1451,12 +1451,12 @@
 }
 
 .timelineContent strong {
-  overflow: hidden;
+  overflow: visible;
   color: #45524c;
   font-size: 9px;
   font-weight: 680;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .timelineContent span {
@@ -3143,7 +3143,8 @@
 }
 
 .timelineTime strong,
-.timelineTime span {
+.timelineTime span,
+.securityNote strong {
   font-size: 10px;
 }
 
