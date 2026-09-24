@@ -210,11 +210,13 @@ export async function exchangeAuthorizationCode({
   });
 
   if (config.id === "slack") {
-    return normalizeSlackToken(payload);
+    const tokenSet = normalizeSlackToken(payload);
+    assertExpectedScopes(config.scopes, tokenSet.scope);
+    return tokenSet;
   }
 
   const accessToken = requiredString(payload, "access_token");
-  return {
+  const tokenSet: OAuthTokenSet = {
     accessToken,
     refreshToken: optionalString(payload, "refresh_token"),
     tokenType: optionalString(payload, "token_type"),
@@ -227,6 +229,8 @@ export async function exchangeAuthorizationCode({
       identityResolution: "deferred_to_worker",
     },
   };
+  assertExpectedScopes(config.scopes, tokenSet.scope);
+  return tokenSet;
 }
 
 async function exchangeNotionCode(
@@ -369,4 +373,25 @@ function expiresAt(value: unknown) {
   return Number.isFinite(seconds)
     ? new Date(Date.now() + seconds * 1000).toISOString()
     : null;
+}
+
+function assertExpectedScopes(requested: string[], granted: string | null) {
+  if (!requested.length) return;
+  if (!granted) {
+    throw new Error("Provider did not report the granted scopes.");
+  }
+  const requestedSet = new Set(requested);
+  const grantedSet = new Set(
+    granted
+      .split(/[\s,]+/)
+      .map((scope) => scope.trim())
+      .filter(Boolean),
+  );
+  const missing = requested.filter((scope) => !grantedSet.has(scope));
+  const unexpected = [...grantedSet].filter(
+    (scope) => !requestedSet.has(scope),
+  );
+  if (missing.length || unexpected.length) {
+    throw new Error("Provider returned an unexpected scope set.");
+  }
 }
