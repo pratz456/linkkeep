@@ -68,19 +68,17 @@ test.describe("Morrow dashboard interactions", () => {
     page,
   }) => {
     await resetWorkspace(page);
-    await page.getByRole("button", { name: "Week" }).click();
-    await page.getByRole("button", { name: "Month" }).click();
+    await page.getByRole("button", { name: "Week", exact: true }).click();
+    await page.getByRole("button", { name: "Month", exact: true }).click();
     await page.goBack();
-    await expect(page.getByRole("button", { name: "Week" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    await expect(
+      page.getByRole("button", { name: "Week", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
     await page.goBack();
     await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByRole("button", { name: "Day" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    await expect(
+      page.getByRole("button", { name: "Day", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
 
     await page.getByRole("button", { name: "Work", exact: true }).click();
     await page

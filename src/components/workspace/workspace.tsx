@@ -1761,11 +1761,11 @@ function MajorTaskCard({
       className={`${styles.majorCard} ${
         featured ? styles.majorCardFeatured : ""
       }`}
+      onClick={onOpen}
     >
       <button
         type="button"
         className={styles.cardHitArea}
-        onClick={onOpen}
         aria-label={`Open ${task.title}`}
       />
       <div className={styles.majorTopline}>

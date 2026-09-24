@@ -7,15 +7,15 @@ export default defineConfig({
   reporter: "line",
   use: {
     ...devices["Desktop Chrome"],
-    baseURL: "http://127.0.0.1:3000",
+    baseURL: "http://127.0.0.1:3100",
     channel: process.env.CI ? undefined : "chrome",
     headless: true,
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "npm run dev -- --hostname 127.0.0.1 --port 3000",
-    url: "http://127.0.0.1:3000",
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
+    command: "npm run build && npm start -- -p 3100",
+    url: "http://127.0.0.1:3100",
+    reuseExistingServer: false,
+    timeout: 180_000,
   },
 });
