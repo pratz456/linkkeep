@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { ConnectorId } from "@/lib/workspace/types";
+import { compareGrantedScopes } from "@/lib/connectors/security";
 
 export type OAuthConnectorId =
   | "gmail"
@@ -377,21 +378,7 @@ function expiresAt(value: unknown) {
 
 function assertExpectedScopes(requested: string[], granted: string | null) {
   if (!requested.length) return;
-  if (!granted) {
-    throw new Error("Provider did not report the granted scopes.");
-  }
-  const requestedSet = new Set(requested);
-  const grantedSet = new Set(
-    granted
-      .split(/[\s,]+/)
-      .map((scope) => scope.trim())
-      .filter(Boolean),
-  );
-  const missing = requested.filter((scope) => !grantedSet.has(scope));
-  const unexpected = [...grantedSet].filter(
-    (scope) => !requestedSet.has(scope),
-  );
-  if (missing.length || unexpected.length) {
+  if (!compareGrantedScopes(requested, granted).matches) {
     throw new Error("Provider returned an unexpected scope set.");
   }
 }

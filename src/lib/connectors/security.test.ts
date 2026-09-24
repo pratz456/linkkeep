@@ -3,6 +3,7 @@ import {
   createOAuthTransaction,
   createPkcePair,
   createWorkspaceSession,
+  compareGrantedScopes,
   decryptSecret,
   encryptSecret,
   parseEncryptionKey,
@@ -32,6 +33,32 @@ describe("connector secret encryption", () => {
     const tampered = parts.join(".");
 
     expect(() => decryptSecret(tampered, encryptionKey)).toThrow();
+  });
+});
+
+describe("OAuth scope validation", () => {
+  it("accepts the exact granted set independent of provider separators", () => {
+    expect(
+      compareGrantedScopes(
+        ["calendar.events.readonly", "calendar.calendarlist.readonly"],
+        "calendar.calendarlist.readonly,calendar.events.readonly",
+      ),
+    ).toEqual({
+      matches: true,
+      missing: [],
+      unexpected: [],
+    });
+  });
+
+  it("fails closed on missing or unexpectedly broad scopes", () => {
+    expect(
+      compareGrantedScopes(["gmail.metadata"], "gmail.readonly"),
+    ).toMatchObject({
+      matches: false,
+      missing: ["gmail.metadata"],
+      unexpected: ["gmail.readonly"],
+    });
+    expect(compareGrantedScopes(["gmail.metadata"], null).matches).toBe(false);
   });
 });
 

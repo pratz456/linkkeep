@@ -186,6 +186,29 @@ export function parseEncryptionKey(value: string | undefined) {
   return buffer.length === 32 ? buffer : null;
 }
 
+export function compareGrantedScopes(
+  requested: string[],
+  granted: string | null,
+) {
+  const requestedSet = new Set(requested);
+  const grantedSet = new Set(
+    (granted ?? "")
+      .split(/[\s,]+/)
+      .map((scope) => scope.trim())
+      .filter(Boolean),
+  );
+  return {
+    matches:
+      granted !== null &&
+      requested.every((scope) => grantedSet.has(scope)) &&
+      [...grantedSet].every((scope) => requestedSet.has(scope)),
+    missing: requested.filter((scope) => !grantedSet.has(scope)),
+    unexpected: [...grantedSet].filter(
+      (scope) => !requestedSet.has(scope),
+    ),
+  };
+}
+
 export function encryptSecret(value: string, rawKey: string) {
   const key = parseEncryptionKey(rawKey);
   if (!key) {
