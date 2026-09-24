@@ -1,8 +1,30 @@
-import { redirect } from "next/navigation";
-import { auth, linkedInConfigured } from "@/auth";
-import { signInDemo, signInWithLinkedIn } from "@/app/actions";
+import { Workspace } from "@/components/workspace/workspace";
+import {
+  getInitialWorkspaceSnapshot,
+  getPublicConnectorStates,
+} from "@/lib/connectors/runtime";
+import { createDemoWorkspace } from "@/lib/workspace/demo-data";
 
-export default async function HomePage({
+export const dynamic = "force-dynamic";
+
+export default async function HomePage() {
+  const demoSnapshot = createDemoWorkspace();
+  const [initialSnapshot, initialConnectors] = await Promise.all([
+    getInitialWorkspaceSnapshot(demoSnapshot),
+    getPublicConnectorStates(),
+  ]);
+
+  return (
+    <Workspace
+      initialSnapshot={initialSnapshot}
+      initialConnectors={initialConnectors}
+      localMode={process.env.WORKLIFE_LOCAL_MODE === "true"}
+    />
+  );
+}
+
+/*
+async function LegacyHomePage({
   searchParams,
 }: {
   searchParams: Promise<{ error?: string }>;
@@ -206,3 +228,4 @@ function LinkedInIcon() {
     </svg>
   );
 }
+*/

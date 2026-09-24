@@ -1,19 +1,229 @@
+import { PGlite } from "@electric-sql/pglite";
 import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
+import { mkdirSync } from "node:fs";
+import { dirname, resolve, sep } from "node:path";
+import { sql as drizzleSql } from "drizzle-orm";
+import {
+  drizzle as drizzleNeon,
+  type NeonHttpDatabase,
+} from "drizzle-orm/neon-http";
+import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import * as schema from "./schema";
 
 const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
-  throw new Error("DATABASE_URL is not set");
+export const databaseConfigured = Boolean(databaseUrl);
+const unavailableDatabaseUrl =
+  "postgresql://disabled:disabled@unconfigured.invalid/disabled";
+
+const isPglite =
+  (databaseUrl?.startsWith("pglite:") ?? false) &&
+  process.env.NODE_ENV !== "production";
+const globalForDatabase = globalThis as typeof globalThis & {
+  morrowPglite?: PGlite;
+};
+
+function createDatabase(): NeonHttpDatabase<typeof schema> {
+  if (isPglite) {
+    const dataDir = databaseUrl?.slice("pglite:".length) || "./data/morrow";
+    const dataRoot = resolve(process.cwd(), "data");
+    const relativeDataDir = dataDir.replace(/^\.?\/?data\/?/, "");
+    const resolvedDataDir =
+      dataDir === "memory"
+        ? dataDir
+        : resolve(dataRoot, relativeDataDir || "morrow");
+    if (
+      resolvedDataDir !== "memory" &&
+      resolvedDataDir !== dataRoot &&
+      !resolvedDataDir.startsWith(`${dataRoot}${sep}`)
+    ) {
+      throw new Error("PGlite data must stay inside the local data directory.");
+    }
+    if (resolvedDataDir !== "memory") {
+      mkdirSync(dirname(resolvedDataDir), { recursive: true });
+    }
+    const client =
+      globalForDatabase.morrowPglite ??
+      (resolvedDataDir === "memory"
+        ? new PGlite()
+        : new PGlite(resolvedDataDir));
+    globalForDatabase.morrowPglite = client;
+    return drizzlePglite(client, { schema }) as unknown as NeonHttpDatabase<
+      typeof schema
+    >;
+  }
+
+  const remoteDatabaseUrl =
+    databaseUrl && !databaseUrl.startsWith("pglite:")
+      ? databaseUrl
+      : unavailableDatabaseUrl;
+  const client = neon(remoteDatabaseUrl);
+  return drizzleNeon(client, { schema });
 }
 
-const sql = neon(databaseUrl);
-export const db = drizzle(sql, { schema });
+export const db = createDatabase();
+
+async function sql(
+  strings: TemplateStringsArray,
+  ...values: unknown[]
+) {
+  if (values.length) {
+    throw new Error("Bootstrap SQL does not accept interpolated values.");
+  }
+  return db.execute(drizzleSql.raw(strings.join("")));
+}
 
 let bootstrapped = false;
+let connectorBootstrapped = false;
+
+export async function ensureConnectorDb() {
+  if (connectorBootstrapped) return;
+  if (!databaseUrl) {
+    throw new Error("DATABASE_URL is required for connector storage.");
+  }
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id TEXT PRIMARY KEY,
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS "connectorAccounts" (
+      id TEXT PRIMARY KEY,
+      "workspaceId" TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      "externalAccountId" TEXT,
+      "accountLabel" TEXT,
+      "accessTokenEncrypted" TEXT NOT NULL,
+      "refreshTokenEncrypted" TEXT,
+      "keyVersion" TEXT NOT NULL DEFAULT 'local-v1',
+      "tokenGeneration" INTEGER NOT NULL DEFAULT 1,
+      "tokenType" TEXT,
+      scope TEXT,
+      "expiresAt" TIMESTAMPTZ,
+      "metadataJson" TEXT NOT NULL DEFAULT '{}',
+      "authorizedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "lastSyncedAt" TIMESTAMPTZ,
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS "connectorSyncJobs" (
+      id TEXT PRIMARY KEY,
+      "connectorAccountId" TEXT NOT NULL
+        REFERENCES "connectorAccounts"(id) ON DELETE CASCADE,
+      "jobType" TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      "idempotencyKey" TEXT NOT NULL,
+      "payloadJson" TEXT NOT NULL DEFAULT '{}',
+      "attemptCount" INTEGER NOT NULL DEFAULT 0,
+      "maxAttempts" INTEGER NOT NULL DEFAULT 8,
+      "runAfter" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "leaseOwner" TEXT,
+      "leaseExpiresAt" TIMESTAMPTZ,
+      "lastErrorCode" TEXT,
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
+    ALTER TABLE "connectorAccounts"
+    ADD COLUMN IF NOT EXISTS "keyVersion" TEXT NOT NULL DEFAULT 'local-v1'
+  `;
+  await sql`
+    ALTER TABLE "connectorAccounts"
+    ADD COLUMN IF NOT EXISTS "tokenGeneration" INTEGER NOT NULL DEFAULT 1
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS "syncCheckpoints" (
+      id TEXT PRIMARY KEY,
+      "connectorAccountId" TEXT NOT NULL
+        REFERENCES "connectorAccounts"(id) ON DELETE CASCADE,
+      "resourceType" TEXT NOT NULL,
+      "externalResourceId" TEXT NOT NULL DEFAULT 'account',
+      "cursorEncrypted" TEXT,
+      "highWaterAt" TIMESTAMPTZ,
+      "cursorVersion" INTEGER NOT NULL DEFAULT 1,
+      "lastReconciledAt" TIMESTAMPTZ,
+      "lastSuccessfulDeltaAt" TIMESTAMPTZ,
+      "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS "connectorOAuthStates" (
+      id TEXT PRIMARY KEY,
+      "stateHash" TEXT NOT NULL,
+      "workspaceId" TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      "expiresAt" TIMESTAMPTZ NOT NULL,
+      "consumedAt" TIMESTAMPTZ,
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS "connectorItems" (
+      id TEXT PRIMARY KEY,
+      "workspaceId" TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      "connectorAccountId" TEXT NOT NULL
+        REFERENCES "connectorAccounts"(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      "externalId" TEXT NOT NULL,
+      "itemType" TEXT NOT NULL,
+      "dataJson" TEXT NOT NULL,
+      "sourceUpdatedAt" TIMESTAMPTZ,
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS connectorAccounts_workspace_provider_uidx
+    ON "connectorAccounts"("workspaceId", provider)
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS connectorSyncJobs_idempotency_uidx
+    ON "connectorSyncJobs"("idempotencyKey")
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS connectorSyncJobs_queue_idx
+    ON "connectorSyncJobs"(status, "runAfter")
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS syncCheckpoints_account_resource_uidx
+    ON "syncCheckpoints"("connectorAccountId", "resourceType", "externalResourceId")
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS connectorOAuthStates_hash_uidx
+    ON "connectorOAuthStates"("stateHash")
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS connectorItems_account_type_external_uidx
+    ON "connectorItems"("connectorAccountId", "itemType", "externalId")
+  `;
+
+  connectorBootstrapped = true;
+}
+
+export const legacyStorageEnabled = false;
 
 export async function ensureDb() {
+  if (!legacyStorageEnabled) {
+    throw new Error("Legacy LinkKeep storage routes are disabled in Morrow.");
+  }
   if (bootstrapped) return;
+  if (!databaseUrl) {
+    throw new Error(
+      "DATABASE_URL is not configured; legacy connection storage is unavailable.",
+    );
+  }
 
   await sql`
     CREATE TABLE IF NOT EXISTS users (
@@ -81,8 +291,90 @@ export async function ensureDb() {
     )
   `;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id TEXT PRIMARY KEY,
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS "connectorAccounts" (
+      id TEXT PRIMARY KEY,
+      "workspaceId" TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      "externalAccountId" TEXT,
+      "accountLabel" TEXT,
+      "accessTokenEncrypted" TEXT NOT NULL,
+      "refreshTokenEncrypted" TEXT,
+      "keyVersion" TEXT NOT NULL DEFAULT 'local-v1',
+      "tokenGeneration" INTEGER NOT NULL DEFAULT 1,
+      "tokenType" TEXT,
+      scope TEXT,
+      "expiresAt" TIMESTAMPTZ,
+      "metadataJson" TEXT NOT NULL DEFAULT '{}',
+      "authorizedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "lastSyncedAt" TIMESTAMPTZ,
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS "connectorSyncJobs" (
+      id TEXT PRIMARY KEY,
+      "connectorAccountId" TEXT NOT NULL
+        REFERENCES "connectorAccounts"(id) ON DELETE CASCADE,
+      "jobType" TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      "idempotencyKey" TEXT NOT NULL,
+      "payloadJson" TEXT NOT NULL DEFAULT '{}',
+      "attemptCount" INTEGER NOT NULL DEFAULT 0,
+      "maxAttempts" INTEGER NOT NULL DEFAULT 8,
+      "runAfter" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "leaseOwner" TEXT,
+      "leaseExpiresAt" TIMESTAMPTZ,
+      "lastErrorCode" TEXT,
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS "syncCheckpoints" (
+      id TEXT PRIMARY KEY,
+      "connectorAccountId" TEXT NOT NULL
+        REFERENCES "connectorAccounts"(id) ON DELETE CASCADE,
+      "resourceType" TEXT NOT NULL,
+      "externalResourceId" TEXT NOT NULL DEFAULT 'account',
+      "cursorEncrypted" TEXT,
+      "highWaterAt" TIMESTAMPTZ,
+      "cursorVersion" INTEGER NOT NULL DEFAULT 1,
+      "lastReconciledAt" TIMESTAMPTZ,
+      "lastSuccessfulDeltaAt" TIMESTAMPTZ,
+      "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
   await sql`CREATE INDEX IF NOT EXISTS connections_userId_idx ON connections("userId")`;
   await sql`CREATE INDEX IF NOT EXISTS connections_status_idx ON connections(status)`;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS connectorAccounts_workspace_provider_uidx
+    ON "connectorAccounts"("workspaceId", provider)
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS connectorSyncJobs_idempotency_uidx
+    ON "connectorSyncJobs"("idempotencyKey")
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS connectorSyncJobs_queue_idx
+    ON "connectorSyncJobs"(status, "runAfter")
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS syncCheckpoints_account_resource_uidx
+    ON "syncCheckpoints"("connectorAccountId", "resourceType", "externalResourceId")
+  `;
 
   // Additive migration for existing Neon DBs
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS "webhookToken" TEXT`;

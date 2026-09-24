@@ -17,18 +17,34 @@ export function IntegrationsPanel({
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
-  async function load() {
-    const res = await fetch("/api/integrations");
-    if (!res.ok) {
-      setError("Could not load webhook URLs");
-      return;
-    }
-    const data = await res.json();
-    setWebhooks(data.webhooks);
-  }
-
   useEffect(() => {
-    void load();
+    const controller = new AbortController();
+    const frame = window.requestAnimationFrame(async () => {
+      try {
+        const res = await fetch("/api/integrations", {
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          setError("Could not load webhook URLs");
+          return;
+        }
+        const data = await res.json();
+        setWebhooks(data.webhooks);
+      } catch (requestError) {
+        if (
+          requestError instanceof DOMException &&
+          requestError.name === "AbortError"
+        ) {
+          return;
+        }
+        setError("Could not load webhook URLs");
+      }
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      controller.abort();
+    };
   }, []);
 
   async function rotate() {

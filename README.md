@@ -1,102 +1,160 @@
-# LinkKeep
+# Morrow
 
-Manage your LinkedIn connections locally: sign in with LinkedIn, import Connections.csv, then organize people with tags, notes, status, and follow-up dates.
+Morrow is a calm, connector-ready work-life dashboard. It turns changing context
+into prioritized views for today, this week, and this month while keeping major
+outcomes visibly separate from smaller commitments.
 
-## Important LinkedIn API limitation
+## MVP behavior
 
-LinkedIn **does not** let standard developer apps read your connection list. Self-serve OAuth only covers:
+- Defaults to an action-oriented Today brief with persistent Week/Month horizons
+- Shows at most three major outcomes, five quick actions, actionable signals,
+  the next meeting, follow-ups, and a recoverable focus session
+- Prioritizes with deterministic urgency, impact, commitment, dependency,
+  freshness, schedule-fit, staleness, blocker, and manual-adjustment factors
+- Exposes “Why this?” factor points, normalized provenance, confidence, and
+  exclusive primary-horizon reasoning for every task
+- Keeps work, personal, and wellbeing commitments in one filterable workspace
+- Supports keyboard search, responsive navigation, task completion/defer with
+  Undo, task details, and manual capture
+- Persists manual tasks and completion state in the current browser
+- Ships with an explicitly labeled sample workspace for product evaluation
 
-- Sign In (`openid`, `profile`, `email`)
-- Share on LinkedIn (`w_member_social`)
+## Connector honesty
 
-The Connections API (`r_1st_connections`) requires LinkedIn partner approval. LinkKeep therefore:
+The hosted production preview does **not** claim live access to Gmail, Slack,
+Google Calendar/Drive, Notion, Granola, or LinkedIn connections. Personal local
+mode can authorize and poll Gmail metadata, Google Calendar events, Google
+Drive metadata, selected Slack channels, and explicitly shared Notion pages.
+Cursor MCP grants belong to the agent runtime and are never reused by the app.
 
-1. **Connects** your account with Sign In with LinkedIn
-2. **Imports** people from LinkedIn’s official **Connections.csv** data export
-3. **Optionally tries** API sync if you later get partner access (will return a clear 403 otherwise)
+The connector catalog separates public metadata from server configuration:
 
-## Live deployment
+- `src/lib/connectors/catalog.ts` — safe provider names and capabilities
+- `src/lib/connectors/runtime.ts` — server-only environment access
+- `src/lib/connectors/status.ts` — redacted connection status
+- `src/lib/connectors/security.ts` — signed 10-minute OAuth state, PKCE, and
+  authenticated AES-256-GCM token envelopes
+- `src/lib/connectors/providers.ts` — provider-specific authorization exchange
+- `src/lib/connectors/store.ts` — workspace-scoped encrypted grant storage and
+  idempotent durable sync-job enqueueing
+- `src/lib/connectors/local-sync.ts` — bounded local polling and normalization
+- `src/lib/connectors/adapter.ts` — worker-side adapter contract
+- `src/app/api/connectors/route.ts` — no-store status endpoint
+- `src/app/api/connectors/sync/route.ts` — same-origin personal-local sync
+- `src/app/api/connectors/[provider]/*` — authorize, callback, and local-delete
+  seams
 
-- App: https://linkkeep-psi.vercel.app
-- Repo: https://github.com/pratz456/linkkeep
-- Database: Neon Postgres
+Authorization routes are deliberately disabled in production and require
+`WORKLIFE_ENABLE_CONNECTOR_AUTHORIZATION=true` in development. Client
+credentials are never called “connected”; a source becomes **Authorized** only
+after a valid state-bound callback stores an encrypted token, and becomes
+**Live** only after a successful sync. Personal local mode syncs in the local
+Next.js process; hosted production still requires a durable worker.
 
-After deploy, add this LinkedIn redirect URL in your app **Auth** settings:
+Current provider constraints:
 
-`https://linkkeep-psi.vercel.app/api/auth/callback/linkedin`
+- Gmail asks only for `gmail.metadata`. Personal Google test users may set
+  `WORKLIFE_GMAIL_VERIFICATION_STATUS=local_testing`; a public app still needs
+  Google restricted-scope verification/security review.
+- Drive asks for metadata-only access and never downloads file content.
+- Slack defaults to a selected-channel bot model, not user DMs or full search.
+- Notion is limited to content explicitly shared with the integration.
+- Granola is export-only until a supported app-runtime contract exists.
+- LinkedIn relationship sync remains partner-gated; official CSV import is the
+  supported fallback in the retired product.
 
-## Auto-sync (PhantomBuster / Dux-Soup)
+## Security release gates
 
-LinkedIn does not allow apps to read your connection list via OAuth. For ongoing updates, connect a browser-automation tool’s webhook to LinkKeep:
+The inherited LinkKeep auth, connection, integration, demo-login, and webhook
+routes are unconditionally answered with `404` by `src/proxy.ts`. Their
+query-token webhook model and plaintext Auth.js token columns are not part of
+Morrow. A preview deployment must use a clean database and must not inherit
+LinkKeep `AUTH_*`, webhook, or stored-token configuration.
 
-1. Sign in to https://linkkeep-psi.vercel.app/dashboard
-2. Click **Auto-sync setup**
-3. Copy the PhantomBuster or Dux-Soup webhook URL
+Hosted production connectors remain blocked until the product has authenticated
+identity and tenant membership, RLS/scoped repositories, KMS-backed envelope
+encryption and rotation, verified provider webhooks, an isolated durable worker,
+remote revocation plus derived-data deletion, retention/audit controls, and a
+nonce/hash CSP. Personal local mode is intentionally single-user and uses a
+machine-local encryption key.
 
-### PhantomBuster
-- Use [LinkedIn Connections Export](https://phantombuster.com/automations/linkedin/12670/linkedin-connections-export)
-- Paste webhook URL under Advanced → Webhooks
-- Schedule the Phantom (daily/weekly) so LinkKeep stays updated
+Connector content is normalized into bounded, plain-text, explicitly
+`untrusted_connector_content` records. No LLM is called. Future model work must
+keep source text out of system instructions and expose no network or mutation
+tools without deterministic re-authorization and human confirmation.
 
-### Dux-Soup (Turbo/Cloud)
-- Options → Connect → Webhooks → paste URL
-- Enable **Visit** + **Scan**
-- Scan or visit connections in LinkedIn; 1st-degree profiles stream into LinkKeep
+Manual preview tasks use namespaced browser storage. They should not contain
+sensitive work data; the Sources panel includes a clear-local-workspace action.
 
-## Setup
+## Personal local mode on macOS
+
+Requirements: Node.js 20 or newer and npm. Docker is not required; Morrow uses
+PGlite, a Postgres-compatible database persisted under `./data/morrow`.
 
 ```bash
-cd linkedin-connections
-cp .env.example .env.local
 npm install
-npm run dev
+npm run local
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
 
-### Without LinkedIn credentials (demo)
+The first run creates `.env.local` with local database, session, and encryption
+settings. Add OAuth credentials to that file, restart `npm run local`, then use
+**Sources → Connect**. Consent is required once per source; encrypted refresh
+tokens keep later syncs automatic while the local app is open.
 
-Leave `AUTH_LINKEDIN_ID` / `AUTH_LINKEDIN_SECRET` empty and click **Try demo workspace**. You can import CSV and manage connections locally.
+Create provider apps and register these exact callback URLs:
 
-### With LinkedIn Sign In
-
-1. Create an app at [linkedin.com/developers/apps](https://www.linkedin.com/developers/apps)
-2. Under **Products**, request **Sign In with LinkedIn using OpenID Connect**
-3. Under **Auth**, add redirect URL:
-   `http://localhost:3000/api/auth/callback/linkedin`
-4. Put Client ID and Client Secret in `.env.local`:
-
-```env
-AUTH_SECRET=any-long-random-string
-AUTH_URL=http://localhost:3000
-AUTH_LINKEDIN_ID=your_client_id
-AUTH_LINKEDIN_SECRET=your_client_secret
+```text
+http://localhost:3000/api/connectors/gmail/callback
+http://localhost:3000/api/connectors/calendar/callback
+http://localhost:3000/api/connectors/drive/callback
+http://localhost:3000/api/connectors/slack/callback
+http://localhost:3000/api/connectors/notion/callback
 ```
 
-5. Restart `npm run dev` and click **Connect LinkedIn**
+- Google: use one Web OAuth client, add your Google account as a test user,
+  enable Gmail, Calendar, and Drive APIs, then set
+  `WORKLIFE_GOOGLE_CLIENT_ID` and `WORKLIFE_GOOGLE_CLIENT_SECRET`.
+- Slack: create an app with the bot scopes shown in `.env.example`, register the
+  Slack callback, install it, and invite it only to channels Morrow may read.
+- Notion: create a public integration, register the callback, set the client ID
+  and secret, and explicitly share only the pages Morrow may read.
 
-Generate a secret with:
+LinkedIn first-degree connections and Granola remain import-only because a
+general public sync API is not available. Use **Sources → Import export** with
+LinkedIn's official `Connections.csv` or a Granola Markdown/text/JSON export;
+those imported actions remain local. OAuth credentials are never generated by
+Morrow and cannot be copied from Cursor, Google, Slack, or Notion MCP access.
+
+To regenerate only missing local settings:
 
 ```bash
-openssl rand -base64 32
+npm run local:setup
 ```
 
-### Importing connections
+## Durable processing seams
 
-1. LinkedIn → **Me** → **Settings & Privacy** → **Data privacy** → **Get a copy of your data**
-2. Select **Connections** only, request the archive
-3. Download and upload `Connections.csv` via **Import CSV** in the dashboard
+OAuth completion writes an idempotent `connector.initial_backfill` job to
+`connectorSyncJobs`. Personal local mode consumes authorized sources through the
+same-origin sync route after callback, on **Sync now**, and every five minutes
+while the dashboard is open. `syncCheckpoints` reserves versioned
+cursor/high-water state for a future hosted worker. Production should provision
+Inngest, Trigger.dev, or an equivalent isolated service with per-account leases
+and provider-specific verification.
+
+## Verification
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
 
 ## Stack
 
-- Next.js (App Router) + TypeScript
-- Auth.js (NextAuth v5) + LinkedIn OpenID Connect
-- SQLite via Drizzle + better-sqlite3 (stored in `data/app.db`)
-
-## Scripts
-
-| Command        | Description              |
-| -------------- | ------------------------ |
-| `npm run dev`  | Start local server       |
-| `npm run build`| Production build         |
-| `npm run start`| Run production server    |
+- Next.js App Router and React
+- TypeScript
+- CSS Modules
+- Vitest
