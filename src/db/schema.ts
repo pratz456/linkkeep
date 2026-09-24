@@ -5,6 +5,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import type { AdapterAccountType } from "next-auth/adapters";
 
@@ -93,6 +94,123 @@ export const connections = pgTable("connections", {
   updatedAt: timestamp("updatedAt", { mode: "string" }).defaultNow().notNull(),
 });
 
+export const workspaces = pgTable("workspaces", {
+  id: text("id").primaryKey(),
+  createdAt: timestamp("createdAt", { mode: "string" }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { mode: "string" }).defaultNow().notNull(),
+});
+
+export const connectorAccounts = pgTable(
+  "connectorAccounts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    workspaceId: text("workspaceId")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    externalAccountId: text("externalAccountId"),
+    accountLabel: text("accountLabel"),
+    accessTokenEncrypted: text("accessTokenEncrypted").notNull(),
+    refreshTokenEncrypted: text("refreshTokenEncrypted"),
+    keyVersion: text("keyVersion").notNull().default("local-v1"),
+    tokenGeneration: integer("tokenGeneration").notNull().default(1),
+    tokenType: text("tokenType"),
+    scope: text("scope"),
+    expiresAt: timestamp("expiresAt", { mode: "string" }),
+    metadataJson: text("metadataJson").notNull().default("{}"),
+    authorizedAt: timestamp("authorizedAt", { mode: "string" })
+      .defaultNow()
+      .notNull(),
+    lastSyncedAt: timestamp("lastSyncedAt", { mode: "string" }),
+    createdAt: timestamp("createdAt", { mode: "string" }).defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt", { mode: "string" }).defaultNow().notNull(),
+  },
+  (account) => [
+    uniqueIndex("connectorAccounts_workspace_provider_uidx").on(
+      account.workspaceId,
+      account.provider,
+    ),
+  ],
+);
+
+export const connectorSyncJobs = pgTable(
+  "connectorSyncJobs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    connectorAccountId: text("connectorAccountId")
+      .notNull()
+      .references(() => connectorAccounts.id, { onDelete: "cascade" }),
+    jobType: text("jobType").notNull(),
+    status: text("status").notNull().default("queued"),
+    idempotencyKey: text("idempotencyKey").notNull(),
+    payloadJson: text("payloadJson").notNull().default("{}"),
+    attemptCount: integer("attemptCount").notNull().default(0),
+    maxAttempts: integer("maxAttempts").notNull().default(8),
+    runAfter: timestamp("runAfter", { mode: "string" }).defaultNow().notNull(),
+    leaseOwner: text("leaseOwner"),
+    leaseExpiresAt: timestamp("leaseExpiresAt", { mode: "string" }),
+    lastErrorCode: text("lastErrorCode"),
+    createdAt: timestamp("createdAt", { mode: "string" }).defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt", { mode: "string" }).defaultNow().notNull(),
+  },
+  (job) => [
+    uniqueIndex("connectorSyncJobs_idempotency_uidx").on(job.idempotencyKey),
+  ],
+);
+
+export const syncCheckpoints = pgTable(
+  "syncCheckpoints",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    connectorAccountId: text("connectorAccountId")
+      .notNull()
+      .references(() => connectorAccounts.id, { onDelete: "cascade" }),
+    resourceType: text("resourceType").notNull(),
+    externalResourceId: text("externalResourceId").notNull().default("account"),
+    cursorEncrypted: text("cursorEncrypted"),
+    highWaterAt: timestamp("highWaterAt", { mode: "string" }),
+    cursorVersion: integer("cursorVersion").notNull().default(1),
+    lastReconciledAt: timestamp("lastReconciledAt", { mode: "string" }),
+    lastSuccessfulDeltaAt: timestamp("lastSuccessfulDeltaAt", {
+      mode: "string",
+    }),
+    updatedAt: timestamp("updatedAt", { mode: "string" }).defaultNow().notNull(),
+  },
+  (checkpoint) => [
+    uniqueIndex("syncCheckpoints_account_resource_uidx").on(
+      checkpoint.connectorAccountId,
+      checkpoint.resourceType,
+      checkpoint.externalResourceId,
+    ),
+  ],
+);
+
+export const connectorOAuthStates = pgTable(
+  "connectorOAuthStates",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    stateHash: text("stateHash").notNull(),
+    workspaceId: text("workspaceId")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    expiresAt: timestamp("expiresAt", { mode: "string" }).notNull(),
+    consumedAt: timestamp("consumedAt", { mode: "string" }),
+    createdAt: timestamp("createdAt", { mode: "string" }).defaultNow().notNull(),
+  },
+  (state) => [
+    uniqueIndex("connectorOAuthStates_hash_uidx").on(state.stateHash),
+  ],
+);
+
 export const usersRelations = relations(users, ({ many }) => ({
   accounts: many(accounts),
   sessions: many(sessions),
@@ -106,6 +224,54 @@ export const connectionsRelations = relations(connections, ({ one }) => ({
   }),
 }));
 
+export const workspacesRelations = relations(workspaces, ({ many }) => ({
+  connectorAccounts: many(connectorAccounts),
+  oauthStates: many(connectorOAuthStates),
+}));
+
+export const connectorAccountsRelations = relations(
+  connectorAccounts,
+  ({ one, many }) => ({
+    workspace: one(workspaces, {
+      fields: [connectorAccounts.workspaceId],
+      references: [workspaces.id],
+    }),
+    syncJobs: many(connectorSyncJobs),
+    syncCheckpoints: many(syncCheckpoints),
+  }),
+);
+
+export const connectorSyncJobsRelations = relations(
+  connectorSyncJobs,
+  ({ one }) => ({
+    connectorAccount: one(connectorAccounts, {
+      fields: [connectorSyncJobs.connectorAccountId],
+      references: [connectorAccounts.id],
+    }),
+  }),
+);
+
+export const syncCheckpointsRelations = relations(
+  syncCheckpoints,
+  ({ one }) => ({
+    connectorAccount: one(connectorAccounts, {
+      fields: [syncCheckpoints.connectorAccountId],
+      references: [connectorAccounts.id],
+    }),
+  }),
+);
+
+export const connectorOAuthStatesRelations = relations(
+  connectorOAuthStates,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [connectorOAuthStates.workspaceId],
+      references: [workspaces.id],
+    }),
+  }),
+);
+
 export type Connection = typeof connections.$inferSelect;
 export type NewConnection = typeof connections.$inferInsert;
 export type ConnectionStatus = Connection["status"];
+export type ConnectorAccount = typeof connectorAccounts.$inferSelect;
