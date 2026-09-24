@@ -1,5 +1,7 @@
 import { PGlite } from "@electric-sql/pglite";
 import { neon } from "@neondatabase/serverless";
+import { mkdirSync } from "node:fs";
+import { dirname, resolve, sep } from "node:path";
 import { sql as drizzleSql } from "drizzle-orm";
 import {
   drizzle as drizzleNeon,
@@ -13,7 +15,9 @@ export const databaseConfigured = Boolean(databaseUrl);
 const unavailableDatabaseUrl =
   "postgresql://disabled:disabled@unconfigured.invalid/disabled";
 
-const isPglite = databaseUrl?.startsWith("pglite:") ?? false;
+const isPglite =
+  (databaseUrl?.startsWith("pglite:") ?? false) &&
+  process.env.NODE_ENV !== "production";
 const globalForDatabase = globalThis as typeof globalThis & {
   morrowPglite?: PGlite;
 };
@@ -21,16 +25,38 @@ const globalForDatabase = globalThis as typeof globalThis & {
 function createDatabase(): NeonHttpDatabase<typeof schema> {
   if (isPglite) {
     const dataDir = databaseUrl?.slice("pglite:".length) || "./data/morrow";
+    const dataRoot = resolve(process.cwd(), "data");
+    const relativeDataDir = dataDir.replace(/^\.?\/?data\/?/, "");
+    const resolvedDataDir =
+      dataDir === "memory"
+        ? dataDir
+        : resolve(dataRoot, relativeDataDir || "morrow");
+    if (
+      resolvedDataDir !== "memory" &&
+      resolvedDataDir !== dataRoot &&
+      !resolvedDataDir.startsWith(`${dataRoot}${sep}`)
+    ) {
+      throw new Error("PGlite data must stay inside the local data directory.");
+    }
+    if (resolvedDataDir !== "memory") {
+      mkdirSync(dirname(resolvedDataDir), { recursive: true });
+    }
     const client =
       globalForDatabase.morrowPglite ??
-      (dataDir === "memory" ? new PGlite() : new PGlite(dataDir));
+      (resolvedDataDir === "memory"
+        ? new PGlite()
+        : new PGlite(resolvedDataDir));
     globalForDatabase.morrowPglite = client;
     return drizzlePglite(client, { schema }) as unknown as NeonHttpDatabase<
       typeof schema
     >;
   }
 
-  const client = neon(databaseUrl ?? unavailableDatabaseUrl);
+  const remoteDatabaseUrl =
+    databaseUrl && !databaseUrl.startsWith("pglite:")
+      ? databaseUrl
+      : unavailableDatabaseUrl;
+  const client = neon(remoteDatabaseUrl);
   return drizzleNeon(client, { schema });
 }
 

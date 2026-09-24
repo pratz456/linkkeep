@@ -2501,7 +2501,12 @@ function SourcesDrawer({
                           }
                           onChange={(event) => {
                             const file = event.target.files?.[0];
-                            if (file) onImport(connector.id, file);
+                            if (file) {
+                              onImport(
+                                connector.id as "granola" | "linkedin",
+                                file,
+                              );
+                            }
                             event.target.value = "";
                           }}
                         />
