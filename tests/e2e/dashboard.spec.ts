@@ -1,11 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 
 async function resetWorkspace(page: Page) {
-  await page.addInitScript(() => {
+  await page.goto("/");
+  await page.evaluate(() => {
     window.localStorage.clear();
     window.sessionStorage.clear();
   });
-  await page.goto("/");
+  await page.reload();
   await expect(page.getByText(/Good (morning|afternoon|evening)\./)).toBeVisible();
 }
 
@@ -14,7 +15,10 @@ async function addMajorTask(page: Page, title: string) {
   const dialog = page.getByRole("dialog", { name: "Add a commitment" });
   await dialog.getByLabel("What needs doing?").fill(title);
   await dialog.getByRole("button", { name: "Add task" }).click();
-  await page.getByRole("button", { name: "Close task details" }).click();
+  await page
+    .getByRole("dialog", { name: title })
+    .getByRole("button", { name: "Close task details" })
+    .click();
 }
 
 test.describe("Morrow dashboard interactions", () => {
@@ -30,9 +34,9 @@ test.describe("Morrow dashboard interactions", () => {
     await expect(
       page.getByRole("dialog", { name: "Prepare the Atlas launch decision" }),
     ).toBeVisible();
-    const closeDetails = page.getByRole("button", {
-      name: "Close task details",
-    });
+    const closeDetails = page
+      .getByRole("dialog", { name: "Prepare the Atlas launch decision" })
+      .getByRole("button", { name: "Close task details" });
     await expect(closeDetails).toBeFocused();
     await expect(
       page.locator("main#workspace-main").locator(".."),
@@ -164,7 +168,10 @@ test.describe("responsive and route gates", () => {
       name: "Workspace navigation",
     });
     await expect(drawer).toBeVisible();
-    await expect(page.getByRole("button", { name: "Close navigation" })).toBeFocused();
+    const closeNavigation = drawer.getByRole("button", {
+      name: "Close navigation",
+    });
+    await expect(closeNavigation).toBeFocused();
 
     for (let index = 0; index < 14; index += 1) {
       await page.keyboard.press("Tab");
@@ -179,7 +186,7 @@ test.describe("responsive and route gates", () => {
       ).toBe(true);
     }
 
-    await page.getByRole("button", { name: "Close navigation" }).click();
+    await closeNavigation.click();
     await expect(more).toBeFocused();
   });
 
