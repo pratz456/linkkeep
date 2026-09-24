@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, sql, type SQL } from "drizzle-orm";
 import { db, ensureConnectorDb } from "@/db";
 import {
   connectorAccounts,
@@ -45,7 +45,7 @@ export async function listConnectorAccounts(
   }));
 }
 
-export async function saveConnectorAccountWithInitialJob(input: {
+export interface ConnectorAuthorizationWrite {
   workspaceId: string;
   provider: OAuthConnectorId;
   externalAccountId: string | null;
@@ -58,14 +58,22 @@ export async function saveConnectorAccountWithInitialJob(input: {
   metadataJson: string;
   idempotencyKey: string;
   payload: Record<string, unknown>;
-}) {
-  await ensureConnectorDb();
+}
+
+type AtomicExecutor = (
+  query: SQL,
+) => Promise<{ rows: Array<Record<string, unknown>> }>;
+
+export async function executeConnectorAccountWithInitialJob(
+  execute: AtomicExecutor,
+  input: ConnectorAuthorizationWrite,
+) {
   const now = new Date().toISOString();
   const accountId = crypto.randomUUID();
   const jobId = crypto.randomUUID();
   const keyVersion =
     process.env.CONNECTOR_ENCRYPTION_KEY_VERSION?.trim() || "local-v1";
-  const result = await db.execute<{ id: string }>(sql`
+  const result = await execute(sql`
     WITH upserted AS (
       INSERT INTO "connectorAccounts" (
         id,
@@ -159,10 +167,23 @@ export async function saveConnectorAccountWithInitialJob(input: {
   `);
 
   const persistedId = result.rows[0]?.id;
-  if (!persistedId) {
+  if (typeof persistedId !== "string") {
     throw new Error("Atomic connector persistence returned no account ID.");
   }
   return persistedId;
+}
+
+export async function saveConnectorAccountWithInitialJob(
+  input: ConnectorAuthorizationWrite,
+) {
+  await ensureConnectorDb();
+  return executeConnectorAccountWithInitialJob(
+    async (query) =>
+      (await db.execute(query)) as {
+        rows: Array<Record<string, unknown>>;
+      },
+    input,
+  );
 }
 
 export async function deleteConnectorAccount(
