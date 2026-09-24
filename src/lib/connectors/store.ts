@@ -1,9 +1,10 @@
 import "server-only";
 
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, asc, eq, gt, isNull } from "drizzle-orm";
 import { db, ensureConnectorDb } from "@/db";
 import {
   connectorAccounts,
+  connectorItems,
   connectorOAuthStates,
   connectorSyncJobs,
   workspaces,
@@ -12,6 +13,13 @@ import {
 import type { ConnectorAccountSummary } from "@/lib/connectors/status";
 import type { OAuthConnectorId } from "@/lib/connectors/providers";
 import { hashOAuthState } from "@/lib/connectors/security";
+
+export interface ConnectorItemInput {
+  externalId: string;
+  itemType: "task" | "schedule" | "follow_up";
+  dataJson: string;
+  sourceUpdatedAt: string | null;
+}
 
 export async function ensureWorkspace(workspaceId: string) {
   await ensureConnectorDb();
@@ -63,6 +71,15 @@ export async function getConnectorAccount(
     )
     .limit(1);
   return rows[0] ?? null;
+}
+
+export async function listConnectorAccountRecords(workspaceId: string) {
+  await ensureConnectorDb();
+  return db
+    .select()
+    .from(connectorAccounts)
+    .where(eq(connectorAccounts.workspaceId, workspaceId))
+    .orderBy(asc(connectorAccounts.provider));
 }
 
 export async function saveConnectorAccount(input: {
@@ -134,6 +151,100 @@ export async function deleteConnectorAccount(
         eq(connectorAccounts.provider, provider),
       ),
     );
+}
+
+export async function replaceConnectorItems(
+  account: ConnectorAccount,
+  items: ConnectorItemInput[],
+) {
+  await ensureConnectorDb();
+  await db
+    .delete(connectorItems)
+    .where(eq(connectorItems.connectorAccountId, account.id));
+
+  if (items.length) {
+    const now = new Date().toISOString();
+    await db.insert(connectorItems).values(
+      items.map((item) => ({
+        id: crypto.randomUUID(),
+        workspaceId: account.workspaceId,
+        connectorAccountId: account.id,
+        provider: account.provider,
+        externalId: item.externalId,
+        itemType: item.itemType,
+        dataJson: item.dataJson,
+        sourceUpdatedAt: item.sourceUpdatedAt,
+        updatedAt: now,
+      })),
+    );
+  }
+}
+
+export async function listWorkspaceConnectorItems(workspaceId: string) {
+  await ensureConnectorDb();
+  return db
+    .select()
+    .from(connectorItems)
+    .where(eq(connectorItems.workspaceId, workspaceId))
+    .orderBy(asc(connectorItems.sourceUpdatedAt));
+}
+
+export async function markConnectorSynced(connectorAccountId: string) {
+  await ensureConnectorDb();
+  const now = new Date().toISOString();
+  await db
+    .update(connectorAccounts)
+    .set({ lastSyncedAt: now, updatedAt: now })
+    .where(eq(connectorAccounts.id, connectorAccountId));
+  await db
+    .update(connectorSyncJobs)
+    .set({
+      status: "completed",
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(connectorSyncJobs.connectorAccountId, connectorAccountId),
+        eq(connectorSyncJobs.status, "queued"),
+      ),
+    );
+  return now;
+}
+
+export async function updateConnectorTokens(
+  connectorAccountId: string,
+  input: {
+    accessTokenEncrypted: string;
+    refreshTokenEncrypted?: string | null;
+    expiresAt: string | null;
+    scope?: string | null;
+  },
+) {
+  await ensureConnectorDb();
+  const current = await db
+    .select()
+    .from(connectorAccounts)
+    .where(eq(connectorAccounts.id, connectorAccountId))
+    .limit(1);
+  if (!current[0]) {
+    throw new Error("Connector account no longer exists.");
+  }
+  await db
+    .update(connectorAccounts)
+    .set({
+      accessTokenEncrypted: input.accessTokenEncrypted,
+      refreshTokenEncrypted:
+        input.refreshTokenEncrypted === undefined
+          ? current[0].refreshTokenEncrypted
+          : input.refreshTokenEncrypted,
+      expiresAt: input.expiresAt,
+      scope: input.scope ?? current[0].scope,
+      tokenGeneration: current[0].tokenGeneration + 1,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(connectorAccounts.id, connectorAccountId));
 }
 
 export async function enqueueConnectorSyncJob(input: {

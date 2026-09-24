@@ -50,7 +50,7 @@ const googleScopes: Record<
     "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
     "https://www.googleapis.com/auth/calendar.events.readonly",
   ],
-  drive: ["https://www.googleapis.com/auth/drive.file"],
+  drive: ["https://www.googleapis.com/auth/drive.metadata.readonly"],
 };
 
 function scopesFromEnvironment(
@@ -229,6 +229,45 @@ export async function exchangeAuthorizationCode({
       dataClass: config.id,
       identityResolution: "deferred_to_worker",
     },
+  };
+  assertExpectedScopes(config.scopes, tokenSet.scope);
+  return tokenSet;
+}
+
+export async function refreshOAuthAccessToken(
+  config: OAuthProviderConfig,
+  refreshToken: string,
+): Promise<OAuthTokenSet> {
+  if (config.id === "notion") {
+    throw new Error("Notion access tokens do not use this refresh flow.");
+  }
+
+  const body = new URLSearchParams({
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    refresh_token: refreshToken,
+    grant_type: "refresh_token",
+  });
+  const payload = await requestToken(config.tokenUrl, {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+  });
+
+  if (config.id === "slack") {
+    const tokenSet = normalizeSlackToken(payload);
+    assertExpectedScopes(config.scopes, tokenSet.scope);
+    return tokenSet;
+  }
+
+  const tokenSet: OAuthTokenSet = {
+    accessToken: requiredString(payload, "access_token"),
+    refreshToken: optionalString(payload, "refresh_token"),
+    tokenType: optionalString(payload, "token_type"),
+    scope: optionalString(payload, "scope") ?? config.scopes.join(" "),
+    expiresAt: expiresAt(payload.expires_in),
+    externalAccountId: null,
+    accountLabel: "Google account",
+    metadata: { dataClass: config.id },
   };
   assertExpectedScopes(config.scopes, tokenSet.scope);
   return tokenSet;

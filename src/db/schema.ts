@@ -211,6 +211,35 @@ export const connectorOAuthStates = pgTable(
   ],
 );
 
+export const connectorItems = pgTable(
+  "connectorItems",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    workspaceId: text("workspaceId")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    connectorAccountId: text("connectorAccountId")
+      .notNull()
+      .references(() => connectorAccounts.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    externalId: text("externalId").notNull(),
+    itemType: text("itemType").notNull(),
+    dataJson: text("dataJson").notNull(),
+    sourceUpdatedAt: timestamp("sourceUpdatedAt", { mode: "string" }),
+    createdAt: timestamp("createdAt", { mode: "string" }).defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt", { mode: "string" }).defaultNow().notNull(),
+  },
+  (item) => [
+    uniqueIndex("connectorItems_account_type_external_uidx").on(
+      item.connectorAccountId,
+      item.itemType,
+      item.externalId,
+    ),
+  ],
+);
+
 export const usersRelations = relations(users, ({ many }) => ({
   accounts: many(accounts),
   sessions: many(sessions),
@@ -227,6 +256,7 @@ export const connectionsRelations = relations(connections, ({ one }) => ({
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
   connectorAccounts: many(connectorAccounts),
   oauthStates: many(connectorOAuthStates),
+  connectorItems: many(connectorItems),
 }));
 
 export const connectorAccountsRelations = relations(
@@ -238,6 +268,7 @@ export const connectorAccountsRelations = relations(
     }),
     syncJobs: many(connectorSyncJobs),
     syncCheckpoints: many(syncCheckpoints),
+    connectorItems: many(connectorItems),
   }),
 );
 
@@ -271,7 +302,22 @@ export const connectorOAuthStatesRelations = relations(
   }),
 );
 
+export const connectorItemsRelations = relations(
+  connectorItems,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [connectorItems.workspaceId],
+      references: [workspaces.id],
+    }),
+    connectorAccount: one(connectorAccounts, {
+      fields: [connectorItems.connectorAccountId],
+      references: [connectorAccounts.id],
+    }),
+  }),
+);
+
 export type Connection = typeof connections.$inferSelect;
 export type NewConnection = typeof connections.$inferInsert;
 export type ConnectionStatus = Connection["status"];
 export type ConnectorAccount = typeof connectorAccounts.$inferSelect;
+export type ConnectorItem = typeof connectorItems.$inferSelect;

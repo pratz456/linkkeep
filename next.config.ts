@@ -41,6 +41,7 @@ if (process.env.NODE_ENV === "production") {
 }
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["@electric-sql/pglite"],
   async headers() {
     return [
       {

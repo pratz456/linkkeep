@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
+    "local": "node scripts/setup-local.mjs && next dev",
+    "local:setup": "node scripts/setup-local.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -15,6 +17,7 @@
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.3",
+    "@electric-sql/pglite": "^0.5.8",
     "@neondatabase/serverless": "^1.1.0",
     "drizzle-orm": "^0.45.2",
     "next": "^16.3.6",

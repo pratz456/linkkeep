@@ -1,5 +1,11 @@
+import { PGlite } from "@electric-sql/pglite";
 import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
+import { sql as drizzleSql } from "drizzle-orm";
+import {
+  drizzle as drizzleNeon,
+  type NeonHttpDatabase,
+} from "drizzle-orm/neon-http";
+import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import * as schema from "./schema";
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -7,8 +13,38 @@ export const databaseConfigured = Boolean(databaseUrl);
 const unavailableDatabaseUrl =
   "postgresql://disabled:disabled@unconfigured.invalid/disabled";
 
-const sql = neon(databaseUrl ?? unavailableDatabaseUrl);
-export const db = drizzle(sql, { schema });
+const isPglite = databaseUrl?.startsWith("pglite:") ?? false;
+const globalForDatabase = globalThis as typeof globalThis & {
+  morrowPglite?: PGlite;
+};
+
+function createDatabase(): NeonHttpDatabase<typeof schema> {
+  if (isPglite) {
+    const dataDir = databaseUrl?.slice("pglite:".length) || "./data/morrow";
+    const client =
+      globalForDatabase.morrowPglite ??
+      (dataDir === "memory" ? new PGlite() : new PGlite(dataDir));
+    globalForDatabase.morrowPglite = client;
+    return drizzlePglite(client, { schema }) as unknown as NeonHttpDatabase<
+      typeof schema
+    >;
+  }
+
+  const client = neon(databaseUrl ?? unavailableDatabaseUrl);
+  return drizzleNeon(client, { schema });
+}
+
+export const db = createDatabase();
+
+async function sql(
+  strings: TemplateStringsArray,
+  ...values: unknown[]
+) {
+  if (values.length) {
+    throw new Error("Bootstrap SQL does not accept interpolated values.");
+  }
+  return db.execute(drizzleSql.raw(strings.join("")));
+}
 
 let bootstrapped = false;
 let connectorBootstrapped = false;
@@ -107,6 +143,22 @@ export async function ensureConnectorDb() {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS "connectorItems" (
+      id TEXT PRIMARY KEY,
+      "workspaceId" TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      "connectorAccountId" TEXT NOT NULL
+        REFERENCES "connectorAccounts"(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      "externalId" TEXT NOT NULL,
+      "itemType" TEXT NOT NULL,
+      "dataJson" TEXT NOT NULL,
+      "sourceUpdatedAt" TIMESTAMPTZ,
+      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS connectorAccounts_workspace_provider_uidx
     ON "connectorAccounts"("workspaceId", provider)
   `;
@@ -125,6 +177,10 @@ export async function ensureConnectorDb() {
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS connectorOAuthStates_hash_uidx
     ON "connectorOAuthStates"("stateHash")
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS connectorItems_account_type_external_uidx
+    ON "connectorItems"("connectorAccountId", "itemType", "externalId")
   `;
 
   connectorBootstrapped = true;

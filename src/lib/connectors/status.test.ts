@@ -97,4 +97,38 @@ describe("resolveConnectorStates", () => {
       "Production identity, tenant isolation, KMS encryption, verified webhooks, and deletion controls",
     );
   });
+
+  it("supports a personal local Google test account without hosted worker setup", () => {
+    const environment = {
+      WORKLIFE_LOCAL_MODE: "true",
+      DATABASE_URL: "pglite:./data/morrow-test",
+      WORKLIFE_APP_URL: "http://localhost:3000",
+      WORKLIFE_ENABLE_CONNECTOR_AUTHORIZATION: "true",
+      WORKLIFE_SESSION_SECRET:
+        "a-session-secret-that-is-at-least-32-characters",
+      CONNECTOR_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
+      WORKLIFE_GOOGLE_CLIENT_ID: "client-id",
+      WORKLIFE_GOOGLE_CLIENT_SECRET: "client-secret",
+      WORKLIFE_GMAIL_VERIFICATION_STATUS: "local_testing",
+    };
+
+    const ready = resolveConnectorStates(environment).find(
+      (connector) => connector.id === "gmail",
+    );
+    const authorized = resolveConnectorStates(environment, [
+      {
+        provider: "gmail",
+        accountLabel: "Personal Google account",
+        authorizedAt: "2026-09-24T12:00:00.000Z",
+        lastSyncedAt: null,
+      },
+    ]).find((connector) => connector.id === "gmail");
+
+    expect(ready?.status).toBe("ready_to_connect");
+    expect(authorized?.status).toBe("authorized");
+    expect(authorized?.statusLabel).toBe("Authorized · queued");
+    expect(authorized?.blockers).not.toContain(
+      "Durable sync worker (Inngest, Trigger.dev, or equivalent)",
+    );
+  });
 });

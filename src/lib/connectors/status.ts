@@ -28,12 +28,10 @@ const oauthRequirements: Partial<Record<ConnectorId, readonly string[]>> = {
   slack: [
     "WORKLIFE_SLACK_CLIENT_ID",
     "WORKLIFE_SLACK_CLIENT_SECRET",
-    "WORKLIFE_SLACK_SIGNING_SECRET",
   ],
   notion: [
     "WORKLIFE_NOTION_CLIENT_ID",
     "WORKLIFE_NOTION_CLIENT_SECRET",
-    "WORKLIFE_NOTION_WEBHOOK_SECRET",
     "WORKLIFE_NOTION_VERSION",
   ],
 };
@@ -42,6 +40,7 @@ export function resolveConnectorStates(
   environment: Environment,
   accounts: ConnectorAccountSummary[] = [],
 ): PublicConnectorState[] {
+  const localMode = environment.WORKLIFE_LOCAL_MODE === "true";
   return CONNECTOR_CATALOG.map((connector) => {
     const supportsOAuth = connector.setupKind === "oauth";
     const callbackPath = supportsOAuth
@@ -129,18 +128,14 @@ export function resolveConnectorStates(
     }
     if (
       connector.id === "gmail" &&
-      environment.WORKLIFE_GMAIL_VERIFICATION_STATUS !== "approved"
+      environment.WORKLIFE_GMAIL_VERIFICATION_STATUS !== "approved" &&
+      !(
+        localMode &&
+        environment.WORKLIFE_GMAIL_VERIFICATION_STATUS === "local_testing"
+      )
     ) {
       blockers.push(
         "Google restricted-scope verification and security review approval",
-      );
-    }
-    if (
-      connector.id === "drive" &&
-      !environment.WORKLIFE_GOOGLE_PICKER_API_KEY?.trim()
-    ) {
-      blockers.push(
-        "WORKLIFE_GOOGLE_PICKER_API_KEY (selected-file Picker flow)",
       );
     }
     if (environment.NODE_ENV === "production") {
@@ -174,7 +169,7 @@ export function resolveConnectorStates(
     if (account) {
       const isLive = Boolean(account.lastSyncedAt);
       const workerConfigured = Boolean(
-        environment.WORKLIFE_SYNC_DISPATCH_URL?.trim(),
+        localMode || environment.WORKLIFE_SYNC_DISPATCH_URL?.trim(),
       );
       return {
         ...base,

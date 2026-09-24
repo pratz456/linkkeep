@@ -8,6 +8,7 @@ import {
   type FormEvent,
 } from "react";
 import { Icon } from "@/components/workspace/icon";
+import { parseConnectionsCsv } from "@/lib/csv";
 import {
   formatHorizonRange,
   getCompletionStats,
@@ -104,16 +105,21 @@ interface ActiveFocus {
 interface WorkspaceProps {
   initialSnapshot: WorkspaceSnapshot;
   initialConnectors: PublicConnectorState[];
+  localMode?: boolean;
 }
 
 export function Workspace({
   initialSnapshot,
   initialConnectors,
+  localMode = false,
 }: WorkspaceProps) {
   const [now, setNow] = useState(
     () => new Date(initialSnapshot.generatedAt),
   );
   const [tasks, setTasks] = useState(initialSnapshot.tasks);
+  const [workspaceIsSample, setWorkspaceIsSample] = useState(
+    initialSnapshot.isSample,
+  );
   const [connectors, setConnectors] = useState(initialConnectors);
   const [horizon, setHorizon] = useState<Horizon>("today");
   const [area, setArea] = useState<WorkArea | "All">("All");
@@ -242,6 +248,37 @@ export function Workspace({
 
       if (connected) {
         try {
+          const syncResponse = await fetch("/api/connectors/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ provider: connected }),
+          });
+          if (syncResponse.ok) {
+            const syncPayload = (await syncResponse.json()) as {
+              snapshot?: WorkspaceSnapshot;
+              outcomes?: Array<{
+                provider: ConnectorId;
+                ok: boolean;
+                processed: number;
+              }>;
+            };
+            const snapshot = syncPayload.snapshot;
+            if (snapshot) {
+              setTasks((current) =>
+                mergeSyncedTasks(current, snapshot.tasks),
+              );
+              setFollowUps(snapshot.followUps);
+              setWorkspaceIsSample(snapshot.isSample);
+            }
+            const outcome = syncPayload.outcomes?.[0];
+            if (outcome?.ok) {
+              setToast(
+                `${sourceNames[outcome.provider]} connected · ${outcome.processed} item${
+                  outcome.processed === 1 ? "" : "s"
+                } synced`,
+              );
+            }
+          }
           const response = await fetch("/api/connectors", {
             cache: "no-store",
           });
@@ -312,6 +349,44 @@ export function Workspace({
     const interval = window.setInterval(() => setNow(new Date()), 30_000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (
+      !connectors.some(
+        (connector) =>
+          connector.status === "authorized" ||
+          connector.status === "connected",
+      )
+    ) {
+      return;
+    }
+    async function syncInBackground() {
+      try {
+        const response = await fetch("/api/connectors/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        if (!response.ok) return;
+        const payload = (await response.json()) as {
+          snapshot?: WorkspaceSnapshot;
+        };
+        const snapshot = payload.snapshot;
+        if (!snapshot) return;
+        setTasks((current) =>
+          mergeSyncedTasks(current, snapshot.tasks),
+        );
+        setFollowUps(snapshot.followUps);
+        setWorkspaceIsSample(snapshot.isSample);
+        setCheckedAt(new Date().toISOString());
+      } catch {
+        // Keep the last successful local snapshot and retry on the next interval.
+      }
+    }
+    void syncInBackground();
+    const interval = window.setInterval(syncInBackground, 5 * 60_000);
+    return () => window.clearInterval(interval);
+  }, [connectors]);
 
   const openTasks = useMemo(
     () => prioritizeTasks(tasks, horizon, now),
@@ -444,9 +519,9 @@ export function Workspace({
       completedIds: nextTasks
         .filter((task) => task.isSample && task.status === "completed")
         .map((task) => task.id),
-      customTasks: nextTasks.filter((task) => !task.isSample),
+      customTasks: nextTasks.filter(isManualTask),
       sampleOverrides: nextTasks
-        .filter((task) => task.isSample)
+        .filter((task) => !isManualTask(task))
         .map((task) => ({
           id: task.id,
           status: task.status,
@@ -632,6 +707,46 @@ export function Workspace({
   async function refreshConnectors() {
     setRefreshing(true);
     try {
+      const hasAuthorizedSource = connectors.some(
+        (connector) =>
+          connector.status === "authorized" ||
+          connector.status === "connected",
+      );
+      if (hasAuthorizedSource) {
+        const syncResponse = await fetch("/api/connectors/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        if (syncResponse.ok) {
+          const syncPayload = (await syncResponse.json()) as {
+            snapshot?: WorkspaceSnapshot;
+            outcomes?: Array<{
+              provider: ConnectorId;
+              ok: boolean;
+              processed: number;
+              error?: string;
+            }>;
+          };
+          const snapshot = syncPayload.snapshot;
+          if (snapshot) {
+            setTasks((current) =>
+              mergeSyncedTasks(current, snapshot.tasks),
+            );
+            setFollowUps(snapshot.followUps);
+            setWorkspaceIsSample(snapshot.isSample);
+          }
+          const failures =
+            syncPayload.outcomes?.filter((outcome) => !outcome.ok) ?? [];
+          if (failures.length) {
+            setToast(
+              failures.length === 1
+                ? `${sourceNames[failures[0].provider]}: ${failures[0].error ?? "sync failed"}`
+                : `${failures.length} sources could not sync`,
+            );
+          }
+        }
+      }
       const response = await fetch("/api/connectors", { cache: "no-store" });
       if (!response.ok) throw new Error("status request failed");
       const payload = (await response.json()) as {
@@ -641,7 +756,7 @@ export function Workspace({
       if (!Array.isArray(payload.connectors)) throw new Error("invalid response");
       setConnectors(payload.connectors);
       setCheckedAt(payload.checkedAt ?? new Date().toISOString());
-      setToast("Source status refreshed");
+      setToast((current) => current ?? "Sources refreshed");
     } catch {
       setToast("Could not refresh source status");
     } finally {
@@ -670,6 +785,47 @@ export function Workspace({
     }
   }
 
+  async function importLocalSource(
+    connectorId: Extract<ConnectorId, "granola" | "linkedin">,
+    file: File,
+  ) {
+    if (file.size > 5 * 1024 * 1024) {
+      setToast("Choose an export smaller than 5 MB");
+      return;
+    }
+    try {
+      const text = await file.text();
+      const imported =
+        connectorId === "linkedin"
+          ? tasksFromLinkedInCsv(text, now)
+          : tasksFromGranolaExport(text, file.name, now);
+      if (!imported.length) {
+        setToast(
+          connectorId === "linkedin"
+            ? "No LinkedIn connection rows were found"
+            : "No unchecked action items were found in that Granola export",
+        );
+        return;
+      }
+      setTasks((current) => {
+        const importedIds = new Set(imported.map((task) => task.id));
+        const next = [
+          ...current.filter((task) => !importedIds.has(task.id)),
+          ...imported,
+        ];
+        persist(next);
+        return next;
+      });
+      setToast(
+        `Imported ${imported.length} ${connectorId === "linkedin" ? "relationship follow-up" : "meeting action"}${
+          imported.length === 1 ? "" : "s"
+        } locally`,
+      );
+    } catch {
+      setToast("That export could not be read");
+    }
+  }
+
   function selectHorizon(nextHorizon: Horizon) {
     setHorizon(nextHorizon);
     setShowAllMinor(false);
@@ -681,6 +837,25 @@ export function Workspace({
     setArea(nextArea);
     setMobileNavOpen(false);
     updateViewUrl(horizon, nextArea);
+  }
+
+  function openMeeting(meeting: ScheduleItem) {
+    if (meeting.joinUrl) {
+      try {
+        const url = new URL(meeting.joinUrl);
+        if (url.protocol === "https:") {
+          window.open(url.toString(), "_blank", "noopener,noreferrer");
+          return;
+        }
+      } catch {
+        // Fall through to a safe local notice.
+      }
+    }
+    setToast(
+      workspaceIsSample
+        ? "Sample meeting has no live calendar link"
+        : "This calendar event has no secure meeting link",
+    );
   }
 
   function updateViewUrl(
@@ -974,18 +1149,29 @@ export function Workspace({
         </header>
 
         <main id="workspace-main" className={styles.main}>
-          <section className={styles.sampleNotice} aria-label="Preview status">
+          <section
+            className={styles.sampleNotice}
+            data-live={!workspaceIsSample || undefined}
+            aria-label={workspaceIsSample ? "Preview status" : "Sync status"}
+          >
             <div className={styles.sampleIcon}>
-              <Icon name="sparkles" size={16} />
+              <Icon name={workspaceIsSample ? "sparkles" : "link"} size={16} />
             </div>
             <p>
-              <strong>You&apos;re viewing sample context.</strong>{" "}
+              <strong>
+                {workspaceIsSample
+                  ? "You’re viewing sample context."
+                  : "Your local workspace is live."}
+              </strong>{" "}
               <span>
-                No email, Slack, calendar, or meeting data has been accessed.
+                {workspaceIsSample
+                  ? "No email, Slack, calendar, or meeting data has been accessed."
+                  : "Connected sources sync only through this Mac and its encrypted local database."}
               </span>
             </p>
             <button type="button" onClick={() => setSourcesOpen(true)}>
-              Review sources <Icon name="arrow-right" size={14} />
+              {workspaceIsSample ? "Review sources" : "Manage sources"}{" "}
+              <Icon name="arrow-right" size={14} />
             </button>
           </section>
 
@@ -1069,9 +1255,7 @@ export function Workspace({
               <button
                 type="button"
                 className={`${styles.pulseCard} ${styles.pulseMeeting}`}
-                onClick={() =>
-                  setToast("Sample meeting has no live calendar link")
-                }
+                onClick={() => openMeeting(nextMeeting)}
               >
                 <span className={styles.pulseIcon}>
                   <Icon name="calendar" size={17} />
@@ -1152,9 +1336,7 @@ export function Workspace({
               <NextMeetingCard
                 meeting={nextMeeting}
                 now={now}
-                onOpen={() =>
-                  setToast("Sample meeting has no live calendar link")
-                }
+                onOpen={() => openMeeting(nextMeeting)}
               />
             </div>
           ) : null}
@@ -1341,15 +1523,15 @@ export function Workspace({
                     <p className={styles.sectionKicker}>Your rhythm</p>
                     <h2>{horizon === "today" ? "Today’s shape" : "Coming up"}</h2>
                   </div>
-                  <span className={styles.liveLabel}>Sample</span>
+                  <span className={styles.liveLabel}>
+                    {workspaceIsSample ? "Sample" : "Live"}
+                  </span>
                 </div>
                 {nextMeeting && horizon === "today" ? (
                   <NextMeetingCard
                     meeting={nextMeeting}
                     now={now}
-                    onOpen={() =>
-                      setToast("Sample meeting has no live calendar link")
-                    }
+                    onOpen={() => openMeeting(nextMeeting)}
                   />
                 ) : null}
                 {schedule.length ? (
@@ -1440,33 +1622,39 @@ export function Workspace({
                   </span>
                 </div>
                 <div className={styles.followUpList}>
-                  {openFollowUps.slice(0, 3).map((followUp) => (
-                    <article key={followUp.id}>
-                      <div className={styles.followUpAvatar}>
-                        {followUp.person
-                          .split(" ")
-                          .map((part) => part[0])
-                          .join("")
-                          .slice(0, 2)}
-                      </div>
-                      <div>
-                        <strong>{followUp.person}</strong>
-                        <span>{followUp.reason}</span>
-                        <small>
-                          {followUp.kind === "suggested"
-                            ? "Suggestion"
-                            : formatDue(followUp.dueAt, now)}
-                        </small>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => completeFollowUp(followUp.id)}
-                        aria-label={`Mark follow-up with ${followUp.person} complete`}
-                      >
-                        <Icon name="check" size={14} />
-                      </button>
-                    </article>
-                  ))}
+                  {openFollowUps.length ? (
+                    openFollowUps.slice(0, 3).map((followUp) => (
+                      <article key={followUp.id}>
+                        <div className={styles.followUpAvatar}>
+                          {followUp.person
+                            .split(" ")
+                            .map((part) => part[0])
+                            .join("")
+                            .slice(0, 2)}
+                        </div>
+                        <div>
+                          <strong>{followUp.person}</strong>
+                          <span>{followUp.reason}</span>
+                          <small>
+                            {followUp.kind === "suggested"
+                              ? "Suggestion"
+                              : formatDue(followUp.dueAt, now)}
+                          </small>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => completeFollowUp(followUp.id)}
+                          aria-label={`Mark follow-up with ${followUp.person} complete`}
+                        >
+                          <Icon name="check" size={14} />
+                        </button>
+                      </article>
+                    ))
+                  ) : (
+                    <p className={styles.emptyRailState}>
+                      No follow-ups were found in connected sources.
+                    </p>
+                  )}
                 </div>
               </section>
 
@@ -1605,7 +1793,11 @@ export function Workspace({
           onDisconnect={(connectorId) =>
             void disconnectConnector(connectorId)
           }
+          onImport={(connectorId, file) =>
+            void importLocalSource(connectorId, file)
+          }
           onClearLocal={clearLocalWorkspace}
+          localMode={localMode}
           onClose={() => setSourcesOpen(false)}
         />
       ) : null}
@@ -2113,6 +2305,17 @@ function TaskDrawer({
         </div>
 
         <div className={styles.drawerFooter}>
+          {task.sourceUrl ? (
+            <a
+              className={styles.drawerSource}
+              href={task.sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open source
+              <Icon name="arrow-right" size={14} />
+            </a>
+          ) : null}
           <button
             type="button"
             className={styles.drawerSecondary}
@@ -2155,7 +2358,9 @@ function SourcesDrawer({
   refreshing,
   onRefresh,
   onDisconnect,
+  onImport,
   onClearLocal,
+  localMode,
   onClose,
 }: {
   connectors: PublicConnectorState[];
@@ -2163,7 +2368,12 @@ function SourcesDrawer({
   refreshing: boolean;
   onRefresh: () => void;
   onDisconnect: (connectorId: ConnectorId) => void;
+  onImport: (
+    connectorId: Extract<ConnectorId, "granola" | "linkedin">,
+    file: File,
+  ) => void;
   onClearLocal: () => void;
+  localMode: boolean;
   onClose: () => void;
 }) {
   const liveCount = connectors.filter(
@@ -2258,7 +2468,10 @@ function SourcesDrawer({
                     ))}
                   </div>
                 ) : null}
-                {connector.setupUrl || connector.accountLabel ? (
+                {connector.setupUrl ||
+                connector.accountLabel ||
+                connector.id === "granola" ||
+                connector.id === "linkedin" ? (
                   <div className={styles.connectorActions}>
                     {connector.setupUrl ? (
                       <a href={connector.setupUrl}>
@@ -2275,6 +2488,25 @@ function SourcesDrawer({
                         Delete local grant
                       </button>
                     ) : null}
+                    {connector.id === "granola" ||
+                    connector.id === "linkedin" ? (
+                      <label className={styles.connectorImport}>
+                        Import export
+                        <input
+                          type="file"
+                          accept={
+                            connector.id === "linkedin"
+                              ? ".csv,text/csv"
+                              : ".md,.txt,.json,text/plain,application/json"
+                          }
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) onImport(connector.id, file);
+                            event.target.value = "";
+                          }}
+                        />
+                      </label>
+                    ) : null}
                   </div>
                 ) : null}
               </article>
@@ -2286,17 +2518,23 @@ function SourcesDrawer({
               <Icon name="lock" size={17} />
             </div>
             <p>
-              <strong>Server-side by design</strong>
-              OAuth code is development-gated. Production connection remains
-              blocked until authenticated tenancy, KMS-backed credentials,
-              verified webhooks, revocation, and deletion controls exist.
+              <strong>
+                {localMode ? "Private on this Mac" : "Server-side by design"}
+              </strong>
+              {localMode
+                ? "OAuth grants are encrypted in the local PGlite database. Polling happens from this app; no Morrow VM receives your source data."
+                : "OAuth code is development-gated. Production connection remains blocked until authenticated tenancy, KMS-backed credentials, verified webhooks, revocation, and deletion controls exist."}
             </p>
           </div>
           <div className={styles.localDataControls}>
             <div>
-              <strong>Browser-local preview data</strong>
+              <strong>
+                {localMode ? "Personal local workspace" : "Browser-local preview data"}
+              </strong>
               <span>
-                Manual tasks in this MVP are not suitable for sensitive work.
+                {localMode
+                  ? "Manual tasks stay in this browser; connector grants and synced records stay in ./data/morrow."
+                  : "Manual tasks in this MVP are not suitable for sensitive work."}
               </span>
             </div>
             <button type="button" onClick={onClearLocal}>
@@ -2327,7 +2565,7 @@ function SourcesDrawer({
               size={16}
               className={refreshing ? styles.spinning : ""}
             />
-            Refresh status
+            {localMode ? "Sync now" : "Refresh status"}
           </button>
         </div>
       </aside>
@@ -2645,6 +2883,202 @@ function toDateInput(date: Date) {
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
   const day = String(date.getUTCDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function tasksFromLinkedInCsv(text: string, now: Date): WorkTask[] {
+  return parseConnectionsCsv(text)
+    .slice(0, 50)
+    .map((row, index) => {
+      const fullName = `${row.firstName} ${row.lastName}`.trim();
+      const sourceKey =
+        row.profileUrl || row.email || `${fullName}:${row.company ?? ""}`;
+      const dueAt = importedDueAt(now, (index % 14) + 1);
+      return {
+        id: `linkedin-import:${stableLocalId(sourceKey)}`,
+        title: `Reconnect with ${cleanImportedText(fullName, 90)}`,
+        project: cleanImportedText(row.company || "Relationships", 70),
+        area: "Work",
+        importance: "minor",
+        status: "open",
+        dueAt,
+        estimateMinutes: 15,
+        sourceIds: ["linkedin", "manual"],
+        signals: [
+          {
+            id: `linkedin-import-signal:${stableLocalId(sourceKey)}`,
+            connectorId: "linkedin",
+            label: row.position || row.company || "LinkedIn connection",
+            detail: row.connectedOn
+              ? `Connected on ${row.connectedOn}.`
+              : "Imported from your official LinkedIn Connections.csv export.",
+            occurredAt: now.toISOString(),
+          },
+        ],
+        rationale:
+          "A relationship imported from LinkedIn is ready for a deliberate follow-up.",
+        reasonCodes: ["manual_commitment", "imported_relationship"],
+        sourceUrl: safeImportedProfileUrl(row.profileUrl),
+        priority: {
+          deadlineKind: "soft",
+          deadlineConfidence: 0.8,
+          impactLevel: 1,
+          impactConfidence: 0.5,
+          commitmentKind: "manual",
+          commitmentConfidence: 1,
+          accepted: true,
+          lastUserTouchAt: now.toISOString(),
+        },
+        createdAt: now.toISOString(),
+        isSample: false,
+      } satisfies WorkTask;
+    });
+}
+
+function tasksFromGranolaExport(
+  text: string,
+  fileName: string,
+  now: Date,
+): WorkTask[] {
+  const candidates = new Set<string>();
+  const checkboxPattern =
+    /(?:^|\n)\s*(?:[-*]\s*)?\[\s\]\s+([^\n]{2,500})/g;
+  const actionPattern =
+    /(?:^|\n)\s*(?:[-*]\s*)?(?:action item|action|todo|next step)\s*:\s*([^\n]{2,500})/gi;
+  for (const pattern of [checkboxPattern, actionPattern]) {
+    for (const match of text.matchAll(pattern)) {
+      const candidate = cleanImportedText(match[1] ?? "", 220);
+      if (candidate) candidates.add(candidate);
+    }
+  }
+  try {
+    collectActionStrings(JSON.parse(text), candidates);
+  } catch {
+    // Markdown and text exports are expected to skip JSON parsing.
+  }
+
+  const project =
+    cleanImportedText(fileName.replace(/\.[^.]+$/, ""), 70) ||
+    "Meeting notes";
+  return [...candidates].slice(0, 50).map((candidate, index) => {
+    const sourceKey = `${fileName}:${candidate}`;
+    const occurredAt = now.toISOString();
+    return {
+      id: `granola-import:${stableLocalId(sourceKey)}`,
+      title: candidate,
+      project,
+      area: "Work",
+      importance: "minor",
+      status: "open",
+      dueAt: importedDueAt(now, (index % 7) + 1),
+      estimateMinutes: 20,
+      sourceIds: ["granola", "manual"],
+      signals: [
+        {
+          id: `granola-import-signal:${stableLocalId(sourceKey)}`,
+          connectorId: "granola",
+          label: "Imported meeting action",
+          detail: `Found in ${cleanImportedText(fileName, 100)}.`,
+          occurredAt,
+        },
+      ],
+      rationale:
+        "An unchecked action item imported from your Granola export.",
+      reasonCodes: ["manual_commitment", "imported_meeting_action"],
+      priority: {
+        deadlineKind: "soft",
+        deadlineConfidence: 0.8,
+        impactLevel: 1,
+        impactConfidence: 0.6,
+        commitmentKind: "manual",
+        commitmentConfidence: 1,
+        accepted: true,
+        lastUserTouchAt: occurredAt,
+      },
+      createdAt: occurredAt,
+      isSample: false,
+    } satisfies WorkTask;
+  });
+}
+
+function collectActionStrings(value: unknown, output: Set<string>, key = "") {
+  if (output.size >= 50) return;
+  if (typeof value === "string") {
+    if (/action|task|todo|next.?step/i.test(key)) {
+      const candidate = cleanImportedText(value, 220);
+      if (candidate) output.add(candidate);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectActionStrings(item, output, key));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  Object.entries(value).forEach(([childKey, childValue]) =>
+    collectActionStrings(childValue, output, childKey),
+  );
+}
+
+function cleanImportedText(value: string, maxLength: number) {
+  return value
+    .replace(/[\u0000-\u001F\u007F]/g, "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function safeImportedProfileUrl(value: string | null) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    return url.protocol === "https:" &&
+      (host === "linkedin.com" || host.endsWith(".linkedin.com"))
+      ? url.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function stableLocalId(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function importedDueAt(now: Date, dayOffset: number) {
+  const due = new Date(now);
+  due.setDate(due.getDate() + dayOffset);
+  due.setHours(17, 0, 0, 0);
+  return due.toISOString();
+}
+
+function isManualTask(task: WorkTask) {
+  return (
+    !task.isSample &&
+    task.sourceIds.includes("manual")
+  );
+}
+
+function mergeSyncedTasks(current: WorkTask[], incoming: WorkTask[]) {
+  const currentById = new Map(current.map((task) => [task.id, task]));
+  const synced = incoming.map((task) => {
+    const existing = currentById.get(task.id);
+    if (!existing) return task;
+    return {
+      ...task,
+      status: existing.status,
+      completedAt: existing.completedAt ?? null,
+      deferredUntil: existing.deferredUntil ?? null,
+      dueAt: existing.deferredUntil ? existing.dueAt : task.dueAt,
+    };
+  });
+  return [...synced, ...current.filter(isManualTask)];
 }
 
 function isStoredTask(value: unknown): value is WorkTask {

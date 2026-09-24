@@ -1,17 +1,24 @@
 import { Workspace } from "@/components/workspace/workspace";
-import { getPublicConnectorStates } from "@/lib/connectors/runtime";
+import {
+  getInitialWorkspaceSnapshot,
+  getPublicConnectorStates,
+} from "@/lib/connectors/runtime";
 import { createDemoWorkspace } from "@/lib/workspace/demo-data";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const initialSnapshot = createDemoWorkspace();
-  const initialConnectors = await getPublicConnectorStates();
+  const demoSnapshot = createDemoWorkspace();
+  const [initialSnapshot, initialConnectors] = await Promise.all([
+    getInitialWorkspaceSnapshot(demoSnapshot),
+    getPublicConnectorStates(),
+  ]);
 
   return (
     <Workspace
       initialSnapshot={initialSnapshot}
       initialConnectors={initialConnectors}
+      localMode={process.env.WORKLIFE_LOCAL_MODE === "true"}
     />
   );
 }
