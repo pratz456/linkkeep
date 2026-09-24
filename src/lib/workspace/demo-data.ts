@@ -337,8 +337,8 @@ export function createDemoWorkspace(now = new Date()): WorkspaceSnapshot {
     {
       id: "schedule-review",
       title: "Launch decision review",
-      startAt: afterMinutes(now, 45),
-      endAt: afterMinutes(now, 75),
+      startAt: afterMinutes(now, 120),
+      endAt: afterMinutes(now, 150),
       kind: "meeting",
       sourceId: "calendar",
       attendees: 4,
@@ -351,8 +351,8 @@ export function createDemoWorkspace(now = new Date()): WorkspaceSnapshot {
     {
       id: "schedule-walk",
       title: "Reset walk",
-      startAt: afterMinutes(now, 105),
-      endAt: afterMinutes(now, 135),
+      startAt: afterMinutes(now, 180),
+      endAt: afterMinutes(now, 210),
       kind: "personal",
       sourceId: "manual",
       location: "Outside",
