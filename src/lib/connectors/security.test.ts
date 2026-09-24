@@ -27,7 +27,9 @@ describe("connector secret encryption", () => {
   it("rejects invalid keys and tampered ciphertext", () => {
     expect(parseEncryptionKey("too-short")).toBeNull();
     const encrypted = encryptSecret("provider-access-token", encryptionKey);
-    const tampered = `${encrypted.slice(0, -1)}x`;
+    const parts = encrypted.split(".");
+    parts[2] = `${parts[2][0] === "A" ? "B" : "A"}${parts[2].slice(1)}`;
+    const tampered = parts.join(".");
 
     expect(() => decryptSecret(tampered, encryptionKey)).toThrow();
   });
