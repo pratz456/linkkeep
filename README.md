@@ -65,7 +65,8 @@ Current provider constraints:
 The inherited LinkKeep auth, connection, integration, demo-login, and webhook
 routes are unconditionally answered with `404` by `src/proxy.ts`. Their
 query-token webhook model and plaintext Auth.js token columns are not part of
-Morrow.
+Morrow. A preview deployment must use a clean database and must not inherit
+LinkKeep `AUTH_*`, webhook, or stored-token configuration.
 
 Real production connectors remain blocked until the product has authenticated
 identity and tenant membership, RLS/scoped repositories, KMS-backed envelope
