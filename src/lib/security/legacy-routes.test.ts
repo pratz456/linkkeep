@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { unstable_doesProxyMatch } from "next/experimental/testing/server";
+import { unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
 import { config } from "@/proxy";
 import {
   LEGACY_ROUTE_PREFIXES,
@@ -18,7 +18,7 @@ describe("legacy route release gate", () => {
   ])("unconditionally disables and matches %s", (pathname) => {
     expect(isLegacyRoute(pathname)).toBe(true);
     expect(
-      unstable_doesProxyMatch({
+      unstable_doesMiddlewareMatch({
         config,
         nextConfig: {},
         url: pathname,
@@ -33,7 +33,7 @@ describe("legacy route release gate", () => {
   ])("does not block intended route %s", (pathname) => {
     expect(isLegacyRoute(pathname)).toBe(false);
     expect(
-      unstable_doesProxyMatch({
+      unstable_doesMiddlewareMatch({
         config,
         nextConfig: {},
         url: pathname,
