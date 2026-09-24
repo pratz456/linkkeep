@@ -107,7 +107,9 @@ export function projectTask(task: WorkTask, now: Date): RankedWorkItem {
     0,
     1,
   );
-  const sourceIds = [...new Set(task.sourceIds)];
+  const sourceIds = task.signals.length
+    ? [...new Set(task.signals.map((signal) => signal.id))]
+    : ["manual"];
   const factors: ScoreFactor[] = [];
 
   const urgencyBase =
