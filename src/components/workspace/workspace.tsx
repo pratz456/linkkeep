@@ -1352,7 +1352,10 @@ export function Workspace({
                 </div>
               </section>
 
-              <section className={styles.contextPanel}>
+              <section
+                className={styles.contextPanel}
+                aria-busy={refreshing}
+              >
                 <div className={styles.railHeading}>
                   <div>
                     <p className={styles.sectionKicker}>Context pulse</p>
@@ -2043,6 +2046,7 @@ function SourcesDrawer({
         className={`${styles.drawer} ${styles.sourcesDrawer}`}
         role="dialog"
         aria-modal="true"
+        aria-busy={refreshing}
         aria-labelledby="sources-title"
       >
         <div className={styles.drawerHeader}>
