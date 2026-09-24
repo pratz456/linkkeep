@@ -39,6 +39,19 @@ export function getHorizonEnd(horizon: Horizon, now: Date) {
   ));
 }
 
+export function getHorizonStart(horizon: Horizon, now: Date) {
+  const start = new Date(now);
+  start.setUTCHours(0, 0, 0, 0);
+  if (horizon === "today") return start;
+  if (horizon === "week") {
+    const day = start.getUTCDay() || 7;
+    start.setUTCDate(start.getUTCDate() - (day - 1));
+    return start;
+  }
+  start.setUTCDate(1);
+  return start;
+}
+
 export function getPrimaryHorizon(
   task: WorkTask,
   now: Date,
@@ -485,7 +498,10 @@ export function getCompletionStats(
   now: Date,
 ) {
   const relevant = tasks.filter((task) =>
-    horizonIncludes(getPrimaryHorizon(task, now), horizon),
+    horizonIncludes(getPrimaryHorizon(task, now), horizon) &&
+    (task.status !== "completed" ||
+      new Date(task.completedAt ?? task.dueAt).getTime() >=
+        getHorizonStart(horizon, now).getTime()),
   );
   const completed = relevant.filter((task) => task.status === "completed").length;
 

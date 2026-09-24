@@ -12,6 +12,7 @@ import {
   formatHorizonRange,
   getCompletionStats,
   getHorizonEnd,
+  getHorizonStart,
   groupByImportance,
   prioritizeTasks,
   projectTask,
@@ -31,6 +32,7 @@ import styles from "./workspace.module.css";
 
 const STORAGE_KEY = "morrow-workspace-v1";
 const FOCUS_STORAGE_KEY = "morrow-active-focus-v1";
+const DISPLAY_TIME_ZONE = "UTC";
 
 const horizonCopy: Record<
   Horizon,
@@ -328,11 +330,13 @@ export function Workspace({
   );
 
   const completedTasks = useMemo(() => {
+    const horizonStart = getHorizonStart(horizon, now).getTime();
     const horizonEnd = getHorizonEnd(horizon, now).getTime();
     return tasks
       .filter(
         (task) =>
           task.status === "completed" &&
+          new Date(task.completedAt ?? task.dueAt).getTime() >= horizonStart &&
           new Date(task.dueAt).getTime() <= horizonEnd &&
           (area === "All" || task.area === area) &&
           matchesQuery(task, query),
@@ -412,6 +416,7 @@ export function Workspace({
   const authorizedCount = connectors.filter(
     (connector) => connector.status === "authorized",
   ).length;
+  const dialogOpen = Boolean(selectedTask || sourcesOpen || addTaskOpen);
   const openFollowUps = followUps
     .filter((followUp) => followUp.status === "open")
     .sort((a, b) => {
@@ -476,8 +481,8 @@ export function Workspace({
     const previous = tasks.find((task) => task.id === taskId);
     if (!previous) return;
     const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(17, 0, 0, 0);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    tomorrow.setUTCHours(17, 0, 0, 0);
     setTasks((current) => {
       const next = current.map((task) =>
         task.id === taskId
@@ -575,7 +580,7 @@ export function Workspace({
     const dueDate = String(formData.get("dueDate") ?? "");
     if (!title || !dueDate) return;
 
-    const dueAt = new Date(`${dueDate}T17:00:00`);
+    const dueAt = new Date(`${dueDate}T17:00:00Z`);
     const task: WorkTask = {
       id:
         typeof crypto.randomUUID === "function"
@@ -695,6 +700,8 @@ export function Workspace({
           mobileNavOpen ? styles.sidebarOpen : ""
         }`}
         aria-label="Workspace navigation"
+        aria-hidden={dialogOpen || undefined}
+        inert={dialogOpen || undefined}
       >
         <div className={styles.brandRow}>
           <div className={styles.brandMark} aria-hidden="true">
@@ -760,6 +767,7 @@ export function Workspace({
                   area === item ? styles.areaItemActive : ""
                 }`}
                 onClick={() => selectArea(item)}
+                aria-pressed={area === item}
               >
                 <span
                   className={styles.areaDot}
@@ -815,7 +823,11 @@ export function Workspace({
         />
       ) : null}
 
-      <div className={styles.appColumn}>
+      <div
+        className={styles.appColumn}
+        aria-hidden={dialogOpen || undefined}
+        inert={dialogOpen || undefined}
+      >
         <header className={styles.topbar}>
           <button
             type="button"
@@ -929,11 +941,12 @@ export function Workspace({
               type="button"
               className={styles.sourceButton}
               onClick={() => setSourcesOpen(true)}
+              aria-label="Open source health"
             >
               <span className={styles.statusIndicator} />
               <span>
                 {liveCount
-                  ? `Updated ${formatRelativeDate(checkedAt, new Date())}`
+                  ? `Updated ${formatRelativeDate(checkedAt, now)}`
                   : authorizedCount
                     ? "Sync pending"
                     : "Sources need setup"}
@@ -946,6 +959,7 @@ export function Workspace({
               type="button"
               className={styles.addButton}
               onClick={() => setAddTaskOpen(true)}
+              aria-label="Add task"
             >
               <Icon name="plus" size={17} />
               <span>Add task</span>
@@ -1440,7 +1454,12 @@ export function Workspace({
         </main>
       </div>
 
-      <nav className={styles.mobileBottomNav} aria-label="Mobile navigation">
+      <nav
+        className={styles.mobileBottomNav}
+        aria-label="Mobile navigation"
+        aria-hidden={dialogOpen || undefined}
+        inert={dialogOpen || undefined}
+      >
         <button
           type="button"
           data-active={horizon === "today"}
@@ -1537,6 +1556,7 @@ function NextMeetingCard({
           {new Intl.DateTimeFormat("en-US", {
             hour: "numeric",
             minute: "2-digit",
+            timeZone: DISPLAY_TIME_ZONE,
           }).format(start)}
         </strong>
         <small>
@@ -1544,6 +1564,7 @@ function NextMeetingCard({
           {new Intl.DateTimeFormat("en-US", {
             hour: "numeric",
             minute: "2-digit",
+            timeZone: DISPLAY_TIME_ZONE,
           }).format(end)}
         </small>
       </div>
@@ -1719,14 +1740,17 @@ function ScheduleRow({
         {showDay ? (
           <>
             <strong>
-              {new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(
-                start,
-              )}
+              {new Intl.DateTimeFormat("en-US", {
+                weekday: "short",
+                timeZone: DISPLAY_TIME_ZONE,
+              }).format(start)}
             </strong>
             <span>
-              {new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(
-                start,
-              )}
+              {new Intl.DateTimeFormat("en-US", {
+                month: "short",
+                day: "numeric",
+                timeZone: DISPLAY_TIME_ZONE,
+              }).format(start)}
             </span>
           </>
         ) : (
@@ -1735,12 +1759,14 @@ function ScheduleRow({
               {new Intl.DateTimeFormat("en-US", {
                 hour: "numeric",
                 minute: "2-digit",
+                timeZone: DISPLAY_TIME_ZONE,
               }).format(start)}
             </strong>
             <span>
               {new Intl.DateTimeFormat("en-US", {
                 hour: "numeric",
                 minute: "2-digit",
+                timeZone: DISPLAY_TIME_ZONE,
               })
                 .format(end)
                 .replace(/\s/g, "")}
@@ -2171,6 +2197,7 @@ function SourcesDrawer({
               {new Intl.DateTimeFormat("en-US", {
                 hour: "numeric",
                 minute: "2-digit",
+                timeZone: DISPLAY_TIME_ZONE,
               }).format(new Date(checkedAt))}
             </time>
           </p>
@@ -2396,7 +2423,7 @@ function matchesQuery(task: WorkTask, query: string) {
 }
 
 function getGreeting(now: Date) {
-  const hour = now.getHours();
+  const hour = now.getUTCHours();
   if (hour < 12) return "Good morning";
   if (hour < 18) return "Good afternoon";
   return "Good evening";
@@ -2415,15 +2442,16 @@ function formatDuration(minutes: number) {
 function formatDue(dueAt: string, now: Date, long = false) {
   const due = new Date(dueAt);
   const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
+  today.setUTCHours(0, 0, 0, 0);
   const dueDay = new Date(due);
-  dueDay.setHours(0, 0, 0, 0);
+  dueDay.setUTCHours(0, 0, 0, 0);
   const dayDifference = Math.round(
     (dueDay.getTime() - today.getTime()) / 86400000,
   );
   const time = new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
     minute: "2-digit",
+    timeZone: DISPLAY_TIME_ZONE,
   }).format(due);
 
   if (dayDifference < 0) return `Overdue · ${time}`;
@@ -2435,6 +2463,7 @@ function formatDue(dueAt: string, now: Date, long = false) {
     day: "numeric",
     hour: long ? "numeric" : undefined,
     minute: long ? "2-digit" : undefined,
+    timeZone: DISPLAY_TIME_ZONE,
   }).format(due);
 }
 
@@ -2448,9 +2477,9 @@ function formatRelativeDate(date: string, now: Date) {
 }
 
 function toDateInput(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 

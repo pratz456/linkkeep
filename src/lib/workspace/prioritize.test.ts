@@ -192,6 +192,7 @@ describe("getCompletionStats", () => {
       task("done", new Date(2026, 8, 24, 10), "minor", "completed"),
       task("open", new Date(2026, 8, 24, 17)),
       task("later", new Date(2026, 8, 26, 17)),
+      task("historical", new Date(2026, 7, 1, 10), "minor", "completed"),
     ];
 
     expect(getCompletionStats(tasks, "today", now)).toEqual({

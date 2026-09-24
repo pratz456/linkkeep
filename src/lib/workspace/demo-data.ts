@@ -14,8 +14,8 @@ function atOffset(
   minute = 0,
 ) {
   const result = new Date(now);
-  result.setDate(result.getDate() + dayOffset);
-  result.setHours(hour, minute, 0, 0);
+  result.setUTCDate(result.getUTCDate() + dayOffset);
+  result.setUTCHours(hour, minute, 0, 0);
   return result.toISOString();
 }
 
@@ -34,9 +34,10 @@ function signal(
 }
 
 export function createDemoWorkspace(now = new Date()): WorkspaceSnapshot {
-  const monthName = new Intl.DateTimeFormat("en-US", { month: "long" }).format(
-    now,
-  );
+  const monthName = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    timeZone: "UTC",
+  }).format(now);
   const tasks: WorkTask[] = [
     {
       id: "task-atlas-launch",
