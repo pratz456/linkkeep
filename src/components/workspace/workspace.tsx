@@ -2313,7 +2313,10 @@ function AddTaskDialog({
 function useDialogFocus<T extends HTMLElement>(onClose: () => void) {
   const containerRef = useRef<T>(null);
   const closeRef = useRef(onClose);
-  closeRef.current = onClose;
+
+  useEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     const previous = document.activeElement;

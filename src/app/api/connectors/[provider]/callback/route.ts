@@ -75,11 +75,12 @@ export async function GET(
       "invalid_oauth_state",
     );
   }
+  const validatedWorkspaceId = transaction.workspaceId;
 
   try {
     const consumed = await consumeOAuthState({
       state: transaction.state,
-      workspaceId,
+      workspaceId: validatedWorkspaceId,
       provider,
     });
     if (!consumed) {
@@ -126,7 +127,7 @@ export async function GET(
       verifier: transaction.verifier,
     });
     const connectorAccountId = await saveConnectorAccount({
-      workspaceId,
+      workspaceId: validatedWorkspaceId,
       provider,
       externalAccountId: tokenSet.externalAccountId,
       accountLabel: tokenSet.accountLabel,
@@ -145,7 +146,7 @@ export async function GET(
     await enqueueConnectorSyncJob({
       connectorAccountId,
       jobType: "connector.initial_backfill",
-      idempotencyKey: `oauth:${provider}:${workspaceId}:${transaction.state}`,
+      idempotencyKey: `oauth:${provider}:${validatedWorkspaceId}:${transaction.state}`,
       payload: {
         provider,
         authorizationOnly: true,
