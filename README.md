@@ -48,6 +48,9 @@ staging. They require `NODE_ENV=development`, an exact loopback
 credentials are never called “connected”; a source becomes **Authorized** only
 after a valid state-bound callback stores an encrypted token. This repository
 never marks a source **Live** because no verified worker is bundled.
+The repository `npm run dev` wrapper binds Next.js to `127.0.0.1` and rejects
+hostname overrides; do not bypass it with a directly invoked network-bound
+development server.
 
 Current provider constraints:
 
@@ -67,7 +70,8 @@ Current provider constraints:
 ## Security release gates
 
 The inherited LinkKeep auth, connection, integration, demo-login, and webhook
-routes are unconditionally answered with `404` by `src/proxy.ts`. Their
+handlers have been removed from the app route tree. `src/proxy.ts` retains an
+explicit `404` defense if those paths are accidentally reintroduced. Their
 query-token webhook model and plaintext Auth.js token columns are not part of
 Morrow. A preview deployment must use a clean database and must not inherit
 LinkKeep `AUTH_*`, webhook, or stored-token configuration.

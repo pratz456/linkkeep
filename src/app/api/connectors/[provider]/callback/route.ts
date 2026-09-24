@@ -5,6 +5,7 @@ import {
   isOAuthConnectorId,
 } from "@/lib/connectors/providers";
 import { safeReturnUrl } from "@/lib/connectors/redirect-policy";
+import { normalizeScopeValue } from "@/lib/connectors/credential-policy";
 import {
   encryptSecret,
   readOAuthTransaction,
@@ -150,7 +151,7 @@ export async function GET(
         ? encryptSecret(tokenSet.refreshToken, encryptionKey)
         : null,
       tokenType: tokenSet.tokenType,
-      scope: tokenSet.scope,
+      scope: normalizeScopeValue(tokenSet.scope),
       expiresAt: tokenSet.expiresAt,
       metadataJson: JSON.stringify(tokenSet.metadata),
       idempotencyKey: `oauth:${provider}:${validatedWorkspaceId}:${transaction.state}`,

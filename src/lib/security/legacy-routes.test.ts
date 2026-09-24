@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
 import { config } from "@/proxy";
 import {
@@ -49,5 +51,19 @@ describe("legacy route release gate", () => {
       "/api/integrations",
       "/api/webhooks",
     ]);
+  });
+
+  it.each([
+    "src/app/api/auth/[...nextauth]/route.ts",
+    "src/app/api/connections/route.ts",
+    "src/app/api/connections/[id]/route.ts",
+    "src/app/api/connections/import/route.ts",
+    "src/app/api/connections/sync/route.ts",
+    "src/app/api/demo-login/route.ts",
+    "src/app/api/integrations/route.ts",
+    "src/app/api/webhooks/duxsoup/route.ts",
+    "src/app/api/webhooks/phantombuster/route.ts",
+  ])("does not compile removed legacy handler %s", (routePath) => {
+    expect(existsSync(resolve(process.cwd(), routePath))).toBe(false);
   });
 });

@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { canPreserveRefreshToken } from "@/lib/connectors/credential-policy";
+import {
+  canPreserveRefreshToken,
+  normalizeScopeValue,
+} from "@/lib/connectors/credential-policy";
 
 describe("refresh-token preservation policy", () => {
+  it("stores equivalent scope generations in canonical order", () => {
+    expect(normalizeScopeValue("scope:b, scope:a scope:b")).toBe(
+      "scope:a scope:b",
+    );
+    expect(normalizeScopeValue(null)).toBeNull();
+  });
+
   it("preserves only for the same verified account and exact scope generation", () => {
     expect(
       canPreserveRefreshToken({
