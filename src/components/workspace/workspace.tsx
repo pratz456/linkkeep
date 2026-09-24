@@ -14,10 +14,12 @@ import {
   getHorizonEnd,
   groupByImportance,
   prioritizeTasks,
+  projectTask,
   scheduleForHorizon,
 } from "@/lib/workspace/prioritize";
 import type {
   ConnectorId,
+  FollowUp,
   Horizon,
   PublicConnectorState,
   ScheduleItem,
@@ -28,6 +30,7 @@ import type {
 import styles from "./workspace.module.css";
 
 const STORAGE_KEY = "morrow-workspace-v1";
+const FOCUS_STORAGE_KEY = "morrow-active-focus-v1";
 
 const horizonCopy: Record<
   Horizon,
@@ -54,7 +57,10 @@ const sourceNames: Record<ConnectorId, string> = {
   gmail: "Gmail",
   slack: "Slack",
   calendar: "Calendar",
+  drive: "Google Drive",
+  notion: "Notion",
   granola: "Granola",
+  linkedin: "LinkedIn",
   manual: "Manual",
   webhook: "Webhook",
 };
@@ -63,7 +69,10 @@ const sourceLetters: Record<ConnectorId, string> = {
   gmail: "M",
   slack: "S",
   calendar: "C",
+  drive: "D",
+  notion: "N",
   granola: "G",
+  linkedin: "in",
   manual: "+",
   webhook: "W",
 };
@@ -71,6 +80,23 @@ const sourceLetters: Record<ConnectorId, string> = {
 interface SavedWorkspace {
   completedIds: string[];
   customTasks: WorkTask[];
+  sampleOverrides?: Array<{
+    id: string;
+    status: WorkTask["status"];
+    dueAt: string;
+    deferredUntil: string | null;
+    completedAt: string | null;
+  }>;
+}
+
+interface UndoMutation {
+  task: WorkTask;
+  message: string;
+}
+
+interface ActiveFocus {
+  taskId: string;
+  startedAt: string;
 }
 
 interface WorkspaceProps {
@@ -91,7 +117,9 @@ export function Workspace({
   const [horizon, setHorizon] = useState<Horizon>("today");
   const [area, setArea] = useState<WorkArea | "All">("All");
   const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [showAllMinor, setShowAllMinor] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [addTaskOpen, setAddTaskOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -99,33 +127,62 @@ export function Workspace({
   const [refreshing, setRefreshing] = useState(false);
   const [checkedAt, setCheckedAt] = useState(initialSnapshot.generatedAt);
   const [toast, setToast] = useState<string | null>(null);
+  const [undoMutation, setUndoMutation] = useState<UndoMutation | null>(null);
+  const [followUps, setFollowUps] = useState<FollowUp[]>(
+    initialSnapshot.followUps,
+  );
+  const [activeFocus, setActiveFocus] = useState<ActiveFocus | null>(null);
+  const [focusClock, setFocusClock] = useState(() => Date.now());
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       try {
         const saved = window.localStorage.getItem(STORAGE_KEY);
-        if (!saved) return;
-        const parsed = JSON.parse(saved) as Partial<SavedWorkspace>;
-        const completedIds = Array.isArray(parsed.completedIds)
-          ? parsed.completedIds.filter(
-              (id): id is string => typeof id === "string",
-            )
-          : [];
-        const customTasks = Array.isArray(parsed.customTasks)
-          ? parsed.customTasks.filter(isStoredTask)
-          : [];
+        if (saved) {
+          const parsed = JSON.parse(saved) as Partial<SavedWorkspace>;
+          const completedIds = Array.isArray(parsed.completedIds)
+            ? parsed.completedIds.filter(
+                (id): id is string => typeof id === "string",
+              )
+            : [];
+          const customTasks = Array.isArray(parsed.customTasks)
+            ? parsed.customTasks.filter(isStoredTask)
+            : [];
+          const sampleOverrides = Array.isArray(parsed.sampleOverrides)
+            ? parsed.sampleOverrides.filter(isStoredSampleOverride)
+            : [];
 
-        setTasks([
-          ...initialSnapshot.tasks.map((task) =>
-            completedIds.includes(task.id)
-              ? { ...task, status: "completed" as const }
-              : { ...task, status: "open" as const },
-          ),
-          ...customTasks,
-        ]);
+          setTasks([
+            ...initialSnapshot.tasks.map((task) => {
+              const override = sampleOverrides.find(
+                (candidate) => candidate.id === task.id,
+              );
+              if (override) return { ...task, ...override };
+              return completedIds.includes(task.id)
+                ? { ...task, status: "completed" as const }
+                : { ...task, status: "open" as const };
+            }),
+            ...customTasks,
+          ]);
+        }
+
+        const storedFocus = window.localStorage.getItem(FOCUS_STORAGE_KEY);
+        if (storedFocus) {
+          const focus = JSON.parse(storedFocus) as Partial<ActiveFocus>;
+          if (
+            typeof focus.taskId === "string" &&
+            typeof focus.startedAt === "string"
+          ) {
+            setActiveFocus({
+              taskId: focus.taskId,
+              startedAt: focus.startedAt,
+            });
+          }
+        }
       } catch {
         window.localStorage.removeItem(STORAGE_KEY);
+        window.localStorage.removeItem(FOCUS_STORAGE_KEY);
       }
     });
 
@@ -135,6 +192,14 @@ export function Workspace({
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (
+        event.key.toLowerCase() === "k" &&
+        (event.metaKey || event.ctrlKey)
+      ) {
+        event.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (
         event.key === "/" &&
         !(event.target instanceof HTMLInputElement) &&
         !(event.target instanceof HTMLTextAreaElement)
@@ -143,6 +208,8 @@ export function Workspace({
         searchRef.current?.focus();
       }
       if (event.key === "Escape") {
+        setSearchOpen(false);
+        searchRef.current?.blur();
         setAddTaskOpen(false);
         setSourcesOpen(false);
         setSelectedTaskId(null);
@@ -155,10 +222,90 @@ export function Workspace({
   }, []);
 
   useEffect(() => {
+    const frame = window.requestAnimationFrame(async () => {
+      const url = new URL(window.location.href);
+      const connected = url.searchParams.get("connector_connected");
+      const connectorError = url.searchParams.get("connector_error");
+      if (!connected && !connectorError) return;
+
+      setSourcesOpen(true);
+      setToast(
+        connected
+          ? `${sourceNames[connected as ConnectorId] ?? "Connector"} authorization saved`
+          : "Connector authorization was not completed",
+      );
+      url.searchParams.delete("connector_connected");
+      url.searchParams.delete("connector_error");
+      url.searchParams.delete("connector");
+      window.history.replaceState({}, "", url);
+
+      if (connected) {
+        try {
+          const response = await fetch("/api/connectors", {
+            cache: "no-store",
+          });
+          const payload = (await response.json()) as {
+            connectors?: PublicConnectorState[];
+            checkedAt?: string;
+          };
+          if (response.ok && Array.isArray(payload.connectors)) {
+            setConnectors(payload.connectors);
+            setCheckedAt(payload.checkedAt ?? new Date().toISOString());
+          }
+        } catch {
+          setToast("Authorization saved; source status could not refresh");
+        }
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    function restoreViewFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      const savedHorizon = params.get("horizon");
+      const savedArea = params.get("area");
+      if (
+        savedHorizon === "today" ||
+        savedHorizon === "week" ||
+        savedHorizon === "month"
+      ) {
+        setHorizon(savedHorizon);
+      }
+      if (
+        savedArea === "Work" ||
+        savedArea === "Personal" ||
+        savedArea === "Wellbeing"
+      ) {
+        setArea(savedArea);
+      } else {
+        setArea("All");
+      }
+    }
+
+    const frame = window.requestAnimationFrame(restoreViewFromUrl);
+    window.addEventListener("popstate", restoreViewFromUrl);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("popstate", restoreViewFromUrl);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!toast) return;
-    const timeout = window.setTimeout(() => setToast(null), 2800);
+    const timeout = window.setTimeout(() => {
+      setToast(null);
+      setUndoMutation(null);
+    }, 5000);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    if (!activeFocus) return;
+    const interval = window.setInterval(() => setFocusClock(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [activeFocus]);
 
   const openTasks = useMemo(
     () => prioritizeTasks(tasks, horizon, now),
@@ -200,6 +347,37 @@ export function Workspace({
     () => scheduleForHorizon(initialSnapshot.schedule, horizon, now),
     [horizon, initialSnapshot.schedule, now],
   );
+  const attentionSignals = useMemo(
+    () =>
+      filteredTasks
+        .flatMap((task) =>
+          task.signals
+            .filter(
+              (signal) =>
+                signal.connectorId === "gmail" ||
+                signal.connectorId === "slack",
+            )
+            .map((signal) => ({ signal, task })),
+        )
+        .slice(0, 4),
+    [filteredTasks],
+  );
+  const nextMeeting =
+    schedule.find(
+      (item) =>
+        item.kind === "meeting" &&
+        new Date(item.endAt).getTime() >= now.getTime(),
+    ) ?? schedule.find((item) => item.kind === "meeting");
+  const activeFocusTask =
+    tasks.find((task) => task.id === activeFocus?.taskId) ?? null;
+  const activeFocusMinutes = activeFocus
+    ? Math.max(
+        0,
+        Math.floor(
+          (focusClock - new Date(activeFocus.startedAt).getTime()) / 60000,
+        ),
+      )
+    : 0;
 
   const selectedTask =
     tasks.find((task) => task.id === selectedTaskId) ?? null;
@@ -222,11 +400,24 @@ export function Workspace({
     (sum, task) => sum + task.estimateMinutes,
     0,
   );
-  const connectedCount = connectors.filter(
-    (connector) =>
-      connector.status === "credentials_ready" ||
-      connector.status === "local",
+  const weekTasks = prioritizeTasks(tasks, "week", now);
+  const weekTaskIds = new Set(weekTasks.map((task) => task.id));
+  const laterMonthCount = prioritizeTasks(tasks, "month", now).filter(
+    (task) => !weekTaskIds.has(task.id),
   ).length;
+  const movedCount = tasks.filter((task) => task.deferredUntil).length;
+  const liveCount = connectors.filter(
+    (connector) => connector.status === "connected",
+  ).length;
+  const authorizedCount = connectors.filter(
+    (connector) => connector.status === "authorized",
+  ).length;
+  const openFollowUps = followUps
+    .filter((followUp) => followUp.status === "open")
+    .sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === "explicit" ? -1 : 1;
+      return new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime();
+    });
 
   const areaCounts = useMemo(() => {
     return openTasks.reduce<Record<WorkArea, number>>(
@@ -244,24 +435,137 @@ export function Workspace({
         .filter((task) => task.isSample && task.status === "completed")
         .map((task) => task.id),
       customTasks: nextTasks.filter((task) => !task.isSample),
+      sampleOverrides: nextTasks
+        .filter((task) => task.isSample)
+        .map((task) => ({
+          id: task.id,
+          status: task.status,
+          dueAt: task.dueAt,
+          deferredUntil: task.deferredUntil ?? null,
+          completedAt: task.completedAt ?? null,
+        })),
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
   }
 
   function toggleTask(taskId: string) {
+    const previous = tasks.find((task) => task.id === taskId);
+    if (!previous) return;
+    const completing = previous.status !== "completed";
     setTasks((current) => {
       const next = current.map((task) =>
         task.id === taskId
           ? {
               ...task,
-              status: task.status === "completed" ? "open" : "completed",
+              status: completing ? "completed" : "open",
+              completedAt: completing ? new Date().toISOString() : null,
             }
           : task,
       ) as WorkTask[];
       persist(next);
       return next;
     });
-    setToast("Task updated");
+    setUndoMutation({
+      task: previous,
+      message: completing ? "Task completed" : "Task restored",
+    });
+    setToast(completing ? "Task completed" : "Task restored");
+  }
+
+  function deferTask(taskId: string) {
+    const previous = tasks.find((task) => task.id === taskId);
+    if (!previous) return;
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(17, 0, 0, 0);
+    setTasks((current) => {
+      const next = current.map((task) =>
+        task.id === taskId
+          ? {
+              ...task,
+              status: "open" as const,
+              dueAt: tomorrow.toISOString(),
+              deferredUntil: tomorrow.toISOString(),
+            }
+          : task,
+      );
+      persist(next);
+      return next;
+    });
+    setUndoMutation({ task: previous, message: "Task deferred" });
+    setToast("Moved to tomorrow");
+  }
+
+  function undoLastMutation() {
+    if (!undoMutation) return;
+    setTasks((current) => {
+      const next = current.map((task) =>
+        task.id === undoMutation.task.id ? undoMutation.task : task,
+      );
+      persist(next);
+      return next;
+    });
+    setToast(`${undoMutation.message} undone`);
+    setUndoMutation(null);
+  }
+
+  function startFocus(taskId: string) {
+    const task = tasks.find((candidate) => candidate.id === taskId);
+    const minutesUntilMeeting = nextMeeting
+      ? (new Date(nextMeeting.startAt).getTime() - Date.now()) / 60000
+      : Number.POSITIVE_INFINITY;
+    if (
+      task &&
+      minutesUntilMeeting > 0 &&
+      minutesUntilMeeting < task.estimateMinutes &&
+      !window.confirm(
+        `Only ${Math.max(
+          1,
+          Math.floor(minutesUntilMeeting),
+        )} minutes remain before the next meeting. Start a shorter focus block?`,
+      )
+    ) {
+      return;
+    }
+    const focus = { taskId, startedAt: new Date().toISOString() };
+    setActiveFocus(focus);
+    window.localStorage.setItem(FOCUS_STORAGE_KEY, JSON.stringify(focus));
+    setFocusClock(Date.now());
+    setToast("Focus session started");
+  }
+
+  function endFocus() {
+    setActiveFocus(null);
+    window.localStorage.removeItem(FOCUS_STORAGE_KEY);
+    setToast("Focus session ended");
+  }
+
+  function completeFollowUp(followUpId: string) {
+    setFollowUps((current) =>
+      current.map((followUp) =>
+        followUp.id === followUpId
+          ? { ...followUp, status: "completed" as const }
+          : followUp,
+      ),
+    );
+    setToast("Follow-up marked complete");
+  }
+
+  function clearLocalWorkspace() {
+    if (
+      !window.confirm(
+        "Clear manual tasks, completion state, and the active focus session from this browser?",
+      )
+    ) {
+      return;
+    }
+    window.localStorage.removeItem(STORAGE_KEY);
+    window.localStorage.removeItem(FOCUS_STORAGE_KEY);
+    setTasks(initialSnapshot.tasks);
+    setFollowUps(initialSnapshot.followUps);
+    setActiveFocus(null);
+    setUndoMutation(null);
+    setToast("Local workspace cleared");
   }
 
   function addTask(event: FormEvent<HTMLFormElement>) {
@@ -287,6 +591,18 @@ export function Workspace({
       sourceIds: ["manual"],
       signals: [],
       rationale: "Added manually and kept in this browser.",
+      reasonCodes: ["manual_commitment"],
+      priority: {
+        deadlineKind: "soft",
+        deadlineConfidence: 1,
+        impactLevel:
+          formData.get("importance") === "major" ? 3 : 1,
+        impactConfidence: 1,
+        commitmentKind: "manual",
+        commitmentConfidence: 1,
+        accepted: true,
+        lastUserTouchAt: new Date().toISOString(),
+      },
       createdAt: new Date().toISOString(),
       isSample: false,
     };
@@ -322,9 +638,50 @@ export function Workspace({
     }
   }
 
+  async function disconnectConnector(connectorId: ConnectorId) {
+    if (
+      !window.confirm(
+        `Delete the local ${sourceNames[connectorId]} authorization? This development seam does not revoke the grant at the provider; revoke it in the provider settings too.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const response = await fetch(`/api/connectors/${connectorId}`, {
+        method: "DELETE",
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) throw new Error("disconnect failed");
+      setToast(`${sourceNames[connectorId]} disconnected`);
+      await refreshConnectors();
+    } catch {
+      setToast(`${sourceNames[connectorId]} could not be disconnected`);
+    }
+  }
+
   function selectHorizon(nextHorizon: Horizon) {
     setHorizon(nextHorizon);
+    setShowAllMinor(false);
     setMobileNavOpen(false);
+    updateViewUrl(nextHorizon, area);
+  }
+
+  function selectArea(nextArea: WorkArea | "All") {
+    setArea(nextArea);
+    setMobileNavOpen(false);
+    updateViewUrl(horizon, nextArea);
+  }
+
+  function updateViewUrl(
+    nextHorizon: Horizon,
+    nextArea: WorkArea | "All",
+  ) {
+    const url = new URL(window.location.href);
+    if (nextHorizon === "today") url.searchParams.delete("horizon");
+    else url.searchParams.set("horizon", nextHorizon);
+    if (nextArea === "All") url.searchParams.delete("area");
+    else url.searchParams.set("area", nextArea);
+    window.history.pushState({}, "", url);
   }
 
   return (
@@ -383,9 +740,11 @@ export function Workspace({
                 size={17}
               />
               <span>{horizonCopy[item].label}</span>
-              <span className={styles.navCount}>
-                {prioritizeTasks(tasks, item, now).length}
-              </span>
+              {item === "today" ? (
+                <span className={styles.navCount}>
+                  {prioritizeTasks(tasks, item, now).length}
+                </span>
+              ) : null}
             </button>
           ))}
         </nav>
@@ -400,10 +759,7 @@ export function Workspace({
                 className={`${styles.areaItem} ${
                   area === item ? styles.areaItemActive : ""
                 }`}
-                onClick={() => {
-                  setArea(item);
-                  setMobileNavOpen(false);
-                }}
+                onClick={() => selectArea(item)}
               >
                 <span
                   className={styles.areaDot}
@@ -433,7 +789,9 @@ export function Workspace({
           </span>
           <span>
             <strong>Sources</strong>
-            <small>{connectedCount} available · no live sync</small>
+            <small>
+              {liveCount} live · {authorizedCount} authorized
+            </small>
           </span>
           <Icon name="chevron-right" size={16} />
         </button>
@@ -475,8 +833,12 @@ export function Workspace({
               ref={searchRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search tasks and context"
-              aria-label="Search tasks and context"
+              onFocus={() => setSearchOpen(true)}
+              onBlur={() =>
+                window.setTimeout(() => setSearchOpen(false), 120)
+              }
+              placeholder="Search work, people, and messages"
+              aria-label="Search work, people, and messages"
             />
             {query ? (
               <button
@@ -487,9 +849,80 @@ export function Workspace({
                 <Icon name="close" size={15} />
               </button>
             ) : (
-              <kbd>/</kbd>
+              <kbd>⌘K</kbd>
             )}
           </label>
+          {searchOpen && query.trim() ? (
+            <div
+              className={styles.globalSearchResults}
+              role="listbox"
+              aria-label="Search results"
+              onMouseDown={(event) => event.preventDefault()}
+            >
+              <p>Work</p>
+              {tasks.filter((task) => matchesQuery(task, query)).slice(0, 5)
+                .length ? (
+                tasks
+                  .filter((task) => matchesQuery(task, query))
+                  .slice(0, 5)
+                  .map((task) => (
+                    <button
+                      type="button"
+                      key={task.id}
+                      role="option"
+                      aria-selected="false"
+                      onClick={() => {
+                        setSelectedTaskId(task.id);
+                        setSearchOpen(false);
+                      }}
+                    >
+                      <SourceStack sourceIds={task.sourceIds} compact />
+                      <span>
+                        <strong>{task.title}</strong>
+                        <small>
+                          {task.project} · {task.rationale}
+                        </small>
+                      </span>
+                      <Icon name="arrow-right" size={14} />
+                    </button>
+                  ))
+              ) : (
+                <span className={styles.noSearchResults}>
+                  No work matches “{query}”
+                </span>
+              )}
+              <p>People</p>
+              {followUps
+                .filter((followUp) =>
+                  `${followUp.person} ${followUp.context}`
+                    .toLowerCase()
+                    .includes(query.toLowerCase()),
+                )
+                .slice(0, 3)
+                .map((followUp) => (
+                  <button
+                    type="button"
+                    key={followUp.id}
+                    role="option"
+                    aria-selected="false"
+                    onClick={() => {
+                      setSearchOpen(false);
+                      setToast(
+                        "People detail is not available in the sample workspace",
+                      );
+                    }}
+                  >
+                    <span className={styles.searchPerson}>
+                      {followUp.person.slice(0, 1)}
+                    </span>
+                    <span>
+                      <strong>{followUp.person}</strong>
+                      <small>{followUp.context}</small>
+                    </span>
+                  </button>
+                ))}
+            </div>
+          ) : null}
 
           <div className={styles.topbarActions}>
             <button
@@ -498,8 +931,16 @@ export function Workspace({
               onClick={() => setSourcesOpen(true)}
             >
               <span className={styles.statusIndicator} />
-              <span>Sources</span>
-              <span className={styles.sourceCount}>{connectedCount}</span>
+              <span>
+                {liveCount
+                  ? `Updated ${formatRelativeDate(checkedAt, new Date())}`
+                  : authorizedCount
+                    ? "Sync pending"
+                    : "Sources need setup"}
+              </span>
+              <span className={styles.sourceCount}>
+                {liveCount || authorizedCount}
+              </span>
             </button>
             <button
               type="button"
@@ -531,8 +972,22 @@ export function Workspace({
           <section className={styles.pageHeading}>
             <div>
               <p className={styles.eyebrow}>{horizonCopy[horizon].label}</p>
-              <h1>{horizonCopy[horizon].title}</h1>
-              <p className={styles.headingNote}>{horizonCopy[horizon].note}</p>
+              <h1>
+                {horizon === "today"
+                  ? `${getGreeting(now)}.`
+                  : horizonCopy[horizon].title}
+              </h1>
+              <p className={styles.headingNote}>
+                {horizon === "today"
+                  ? `${Math.min(groupedTasks.major.length, 3)} outcome${
+                      groupedTasks.major.length === 1 ? "" : "s"
+                    } need focus around ${meetingCount} meeting${
+                      meetingCount === 1 ? "" : "s"
+                    }. ${attentionSignals.length} signal${
+                      attentionSignals.length === 1 ? "" : "s"
+                    } need a look.`
+                  : horizonCopy[horizon].note}
+              </p>
             </div>
             <div className={styles.headingDate}>
               <span>{formatHorizonRange(horizon, now)}</span>
@@ -542,7 +997,7 @@ export function Workspace({
                     type="button"
                     key={item}
                     aria-pressed={horizon === item}
-                    onClick={() => setHorizon(item)}
+                    onClick={() => selectHorizon(item)}
                   >
                     {item === "today"
                       ? "Day"
@@ -555,47 +1010,38 @@ export function Workspace({
             </div>
           </section>
 
-          <section className={styles.metrics} aria-label="Focus summary">
-            <Metric
-              label="Major priorities"
-              value={String(groupedTasks.major.length)}
-              note={
-                groupedTasks.major.length > 2
-                  ? "Worth narrowing"
-                  : "A focused load"
-              }
-              icon="target"
-              tone="coral"
-            />
-            <Metric
-              label="Open effort"
-              value={formatDuration(openMinutes)}
-              note={`${openTasks.length} open commitments`}
-              icon="clock"
-              tone="blue"
-            />
-            <Metric
-              label="Focus protected"
-              value={formatDuration(focusMinutes)}
-              note={`${meetingCount} meeting${meetingCount === 1 ? "" : "s"}`}
-              icon="calendar"
-              tone="green"
-            />
-            <Metric
-              label="Progress"
-              value={`${stats.percent}%`}
-              note={`${stats.completed} of ${stats.total} complete`}
-              icon="check"
-              tone="gold"
-              progress={stats.percent}
-            />
-          </section>
+          {area !== "All" || query ? (
+            <div className={styles.activeFilters} aria-label="Active filters">
+              <span>Filtered by</span>
+              {area !== "All" ? (
+                <button type="button" onClick={() => selectArea("All")}>
+                  Area: {area}
+                  <Icon name="close" size={13} />
+                </button>
+              ) : null}
+              {query ? (
+                <button type="button" onClick={() => setQuery("")}>
+                  Search: “{query}”
+                  <Icon name="close" size={13} />
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => {
+                  setQuery("");
+                  selectArea("All");
+                }}
+              >
+                Clear all
+              </button>
+            </div>
+          ) : null}
 
           <div className={styles.contentGrid}>
             <section className={styles.priorityPanel}>
               <div className={styles.sectionHeading}>
                 <div>
-                  <p className={styles.sectionKicker}>Priority stack</p>
+                  <p className={styles.sectionKicker}>Major work</p>
                   <h2>What deserves your attention</h2>
                 </div>
                 <span className={styles.sectionCount}>
@@ -606,7 +1052,7 @@ export function Workspace({
               {filteredTasks.length ? (
                 <>
                   <div className={styles.majorStack}>
-                    {groupedTasks.major.map((task, index) => (
+                    {groupedTasks.major.slice(0, 3).map((task, index) => (
                       <MajorTaskCard
                         key={task.id}
                         task={task}
@@ -618,12 +1064,59 @@ export function Workspace({
                     ))}
                   </div>
 
+                  {groupedTasks.major.length > 3 ? (
+                    <div className={styles.planningWarning} role="status">
+                      <Icon name="target" size={16} />
+                      <span>
+                        {groupedTasks.major.length} items are marked major.
+                        Choose the top three before adding more to Today.
+                      </span>
+                      <button type="button">Plan today</button>
+                    </div>
+                  ) : null}
+
+                  {attentionSignals.length ? (
+                    <div className={styles.attentionSection}>
+                      <div className={styles.minorHeading}>
+                        <div>
+                          <span className={styles.attentionMarker} />
+                          <h3>Needs attention</h3>
+                        </div>
+                        <span>Actionable signals only</span>
+                      </div>
+                      <div className={styles.attentionList}>
+                        {attentionSignals.map(({ signal, task }) => (
+                          <article key={signal.id}>
+                            <SourceMark sourceId={signal.connectorId} />
+                            <button
+                              type="button"
+                              onClick={() => setSelectedTaskId(task.id)}
+                            >
+                              <span>
+                                <strong>{signal.label}</strong>
+                                <small>{signal.detail}</small>
+                              </span>
+                              <em>
+                                {signal.connectorId === "gmail"
+                                  ? "Reply likely"
+                                  : "Decision needed"}
+                              </em>
+                            </button>
+                            <time dateTime={signal.occurredAt}>
+                              {formatRelativeDate(signal.occurredAt, now)}
+                            </time>
+                          </article>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
                   {groupedTasks.minor.length ? (
                     <div className={styles.minorSection}>
                       <div className={styles.minorHeading}>
                         <div>
                           <span className={styles.minorMarker} />
-                          <h3>Smaller moves</h3>
+                          <h3>Quick actions</h3>
                         </div>
                         <span>
                           {formatDuration(
@@ -636,7 +1129,9 @@ export function Workspace({
                         </span>
                       </div>
                       <div className={styles.minorList}>
-                        {groupedTasks.minor.map((task) => (
+                        {groupedTasks.minor
+                          .slice(0, showAllMinor ? undefined : 5)
+                          .map((task) => (
                           <MinorTaskRow
                             key={task.id}
                             task={task}
@@ -644,8 +1139,21 @@ export function Workspace({
                             onOpen={() => setSelectedTaskId(task.id)}
                             onToggle={() => toggleTask(task.id)}
                           />
-                        ))}
+                          ))}
                       </div>
+                      {groupedTasks.minor.length > 5 ? (
+                        <button
+                          type="button"
+                          className={styles.showMoreButton}
+                          onClick={() =>
+                            setShowAllMinor((current) => !current)
+                          }
+                        >
+                          {showAllMinor
+                            ? "Show fewer"
+                            : `Show ${groupedTasks.minor.length - 5} more`}
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
                 </>
@@ -707,16 +1215,31 @@ export function Workspace({
                   </div>
                   <span className={styles.liveLabel}>Sample</span>
                 </div>
+                {nextMeeting && horizon === "today" ? (
+                  <NextMeetingCard
+                    meeting={nextMeeting}
+                    now={now}
+                    onOpen={() =>
+                      setToast("Sample meeting has no live calendar link")
+                    }
+                  />
+                ) : null}
                 {schedule.length ? (
                   <div className={styles.timeline}>
-                    {schedule.slice(0, horizon === "today" ? 6 : 7).map((item) => (
-                      <ScheduleRow
-                        key={item.id}
-                        item={item}
-                        now={now}
-                        showDay={horizon !== "today"}
-                      />
-                    ))}
+                    {schedule
+                      .filter(
+                        (item) =>
+                          horizon !== "today" || item.id !== nextMeeting?.id,
+                      )
+                      .slice(0, horizon === "today" ? 5 : 7)
+                      .map((item) => (
+                        <ScheduleRow
+                          key={item.id}
+                          item={item}
+                          now={now}
+                          showDay={horizon !== "today"}
+                        />
+                      ))}
                   </div>
                 ) : (
                   <p className={styles.emptySchedule}>
@@ -726,6 +1249,92 @@ export function Workspace({
                 <div className={styles.scheduleFooter}>
                   <Icon name="lock" size={14} />
                   Calendar is not connected
+                </div>
+              </section>
+
+              <section className={styles.focusPanel}>
+                <div className={styles.railHeading}>
+                  <div>
+                    <p className={styles.sectionKicker}>Focus</p>
+                    <h2>
+                      {activeFocusTask ? "Focus in progress" : "Protect a block"}
+                    </h2>
+                  </div>
+                  <Icon name="target" size={18} />
+                </div>
+                {activeFocusTask ? (
+                  <div className={styles.activeFocus}>
+                    <p>{activeFocusTask.title}</p>
+                    <strong>{formatDuration(activeFocusMinutes)}</strong>
+                    <span>
+                      Next interruption:{" "}
+                      {nextMeeting
+                        ? formatDue(nextMeeting.startAt, now)
+                        : "none scheduled"}
+                    </span>
+                    <button type="button" onClick={endFocus}>
+                      End focus
+                    </button>
+                  </div>
+                ) : groupedTasks.major[0] ? (
+                  <div className={styles.focusSuggestion}>
+                    <p>{groupedTasks.major[0].title}</p>
+                    <span>
+                      Suggested {Math.min(groupedTasks.major[0].estimateMinutes, 60)}
+                      m block · stops before the next calendar interruption.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => startFocus(groupedTasks.major[0].id)}
+                    >
+                      Start focus
+                    </button>
+                  </div>
+                ) : (
+                  <p className={styles.emptySchedule}>
+                    Choose a major outcome to create a focus block.
+                  </p>
+                )}
+              </section>
+
+              <section className={styles.followUpPanel}>
+                <div className={styles.railHeading}>
+                  <div>
+                    <p className={styles.sectionKicker}>People</p>
+                    <h2>Follow-ups</h2>
+                  </div>
+                  <span className={styles.sectionCount}>
+                    {openFollowUps.length} due
+                  </span>
+                </div>
+                <div className={styles.followUpList}>
+                  {openFollowUps.slice(0, 3).map((followUp) => (
+                    <article key={followUp.id}>
+                      <div className={styles.followUpAvatar}>
+                        {followUp.person
+                          .split(" ")
+                          .map((part) => part[0])
+                          .join("")
+                          .slice(0, 2)}
+                      </div>
+                      <div>
+                        <strong>{followUp.person}</strong>
+                        <span>{followUp.reason}</span>
+                        <small>
+                          {followUp.kind === "suggested"
+                            ? "Suggestion"
+                            : formatDue(followUp.dueAt, now)}
+                        </small>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => completeFollowUp(followUp.id)}
+                        aria-label={`Mark follow-up with ${followUp.person} complete`}
+                      >
+                        <Icon name="check" size={14} />
+                      </button>
+                    </article>
+                  ))}
                 </div>
               </section>
 
@@ -777,28 +1386,65 @@ export function Workspace({
                   <Icon name="arrow-right" size={15} />
                 </button>
               </section>
-
-              <section className={styles.balanceCard}>
-                <div className={styles.balanceIcon}>
-                  <Icon name="sparkles" size={17} />
-                </div>
-                <div>
-                  <p>Balance note</p>
-                  <h3>
-                    {areaCounts.Wellbeing
-                      ? "Personal commitments have a place here."
-                      : "Leave room for life outside work."}
-                  </h3>
-                  <span>
-                    Morrow never lowers a personal task simply because it came
-                    from manual capture.
-                  </span>
-                </div>
-              </section>
             </aside>
           </div>
+
+          <section className={styles.progressStrip} aria-label="Plan progress">
+            <div>
+              <strong>
+                {stats.completed} of {stats.total} commitments complete
+              </strong>
+              <span>
+                {formatDuration(openMinutes)} remaining ·{" "}
+                {formatDuration(focusMinutes)} intentionally scheduled ·{" "}
+                {movedCount} moved
+              </span>
+            </div>
+            <div
+              className={styles.progressBar}
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={stats.total}
+              aria-valuenow={stats.completed}
+              aria-label={`${stats.completed} of ${stats.total} commitments complete`}
+            >
+              <span
+                style={{
+                  width: `${stats.total ? Math.max(3, stats.percent) : 0}%`,
+                }}
+              />
+            </div>
+            <button type="button" onClick={() => selectHorizon("week")}>
+              This week: {weekTasks.length} open · {laterMonthCount} later this
+              month
+              <Icon name="arrow-right" size={15} />
+            </button>
+          </section>
         </main>
       </div>
+
+      <nav className={styles.mobileBottomNav} aria-label="Mobile navigation">
+        <button
+          type="button"
+          data-active={horizon === "today"}
+          onClick={() => selectHorizon("today")}
+        >
+          <Icon name="sun" size={19} />
+          <span>Today</span>
+        </button>
+        <button type="button" onClick={() => searchRef.current?.focus()}>
+          <Icon name="inbox" size={19} />
+          <span>Inbox</span>
+        </button>
+        <button type="button" onClick={() => searchRef.current?.focus()}>
+          <Icon name="search" size={19} />
+          <span>Search</span>
+        </button>
+        <button type="button" onClick={() => setMobileNavOpen(true)}>
+          <Icon name="menu" size={19} />
+          <span>More</span>
+        </button>
+      </nav>
 
       {selectedTask ? (
         <TaskDrawer
@@ -806,6 +1452,7 @@ export function Workspace({
           now={now}
           onClose={() => setSelectedTaskId(null)}
           onToggle={() => toggleTask(selectedTask.id)}
+          onDefer={() => deferTask(selectedTask.id)}
         />
       ) : null}
 
@@ -815,6 +1462,10 @@ export function Workspace({
           checkedAt={checkedAt}
           refreshing={refreshing}
           onRefresh={() => void refreshConnectors()}
+          onDisconnect={(connectorId) =>
+            void disconnectConnector(connectorId)
+          }
+          onClearLocal={clearLocalWorkspace}
           onClose={() => setSourcesOpen(false)}
         />
       ) : null}
@@ -833,7 +1484,12 @@ export function Workspace({
             <span>
               <Icon name="check" size={14} />
             </span>
-            {toast}
+            <p>{toast}</p>
+            {undoMutation ? (
+              <button type="button" onClick={undoLastMutation}>
+                Undo
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -841,36 +1497,63 @@ export function Workspace({
   );
 }
 
-function Metric({
-  label,
-  value,
-  note,
-  icon,
-  tone,
-  progress,
+function NextMeetingCard({
+  meeting,
+  now,
+  onOpen,
 }: {
-  label: string;
-  value: string;
-  note: string;
-  icon: "target" | "clock" | "calendar" | "check";
-  tone: "coral" | "blue" | "green" | "gold";
-  progress?: number;
+  meeting: ScheduleItem;
+  now: Date;
+  onOpen: () => void;
 }) {
+  const start = new Date(meeting.startAt);
+  const end = new Date(meeting.endAt);
+  const minutesUntil = (start.getTime() - now.getTime()) / 60000;
+  const canJoin =
+    Boolean(meeting.joinUrl) && minutesUntil <= 10 && minutesUntil >= -15;
+
   return (
-    <article className={styles.metricCard}>
-      <div className={styles.metricIcon} data-tone={tone}>
-        <Icon name={icon} size={17} />
+    <article className={styles.nextMeetingCard}>
+      <div className={styles.nextMeetingTime}>
+        <span>Next meeting</span>
+        <strong>
+          {new Intl.DateTimeFormat("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+          }).format(start)}
+        </strong>
+        <small>
+          until{" "}
+          {new Intl.DateTimeFormat("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+          }).format(end)}
+        </small>
       </div>
-      <div className={styles.metricContent}>
-        <p>{label}</p>
-        <strong>{value}</strong>
-        <small>{note}</small>
+      <div className={styles.nextMeetingBody}>
+        <h3>{meeting.title}</h3>
+        <p>
+          {meeting.attendees ?? 1} people
+          {meeting.location ? ` · ${meeting.location}` : " · No location"}
+        </p>
+        {meeting.preparationNote ? (
+          <span>
+            <Icon name="sparkles" size={14} />
+            {meeting.preparationNote}
+          </span>
+        ) : null}
+        {meeting.conflictState && meeting.conflictState !== "none" ? (
+          <em>
+            {meeting.conflictState === "overlap"
+              ? "Overlaps another event"
+              : "Back-to-back meeting"}
+          </em>
+        ) : null}
       </div>
-      {typeof progress === "number" ? (
-        <div className={styles.progressTrack} aria-hidden="true">
-          <span style={{ width: `${Math.max(4, progress)}%` }} />
-        </div>
-      ) : null}
+      <button type="button" onClick={onOpen}>
+        {canJoin ? "Join meeting" : "View details"}
+        <Icon name="arrow-right" size={14} />
+      </button>
     </article>
   );
 }
@@ -916,8 +1599,17 @@ function MajorTaskCard({
           {task.signals.length
             ? `${task.signals.length} context signal${
                 task.signals.length === 1 ? "" : "s"
-              }`
-            : "Manual context"}
+              } · latest ${formatRelativeDate(
+                task.signals.reduce((latest, signal) =>
+                  new Date(signal.occurredAt).getTime() >
+                  new Date(latest).getTime()
+                    ? signal.occurredAt
+                    : latest,
+                  task.signals[0].occurredAt,
+                ),
+                now,
+              )}`
+            : "User-authored · browser local"}
         </span>
       </div>
       <footer className={styles.majorFooter}>
@@ -1129,12 +1821,17 @@ function TaskDrawer({
   now,
   onClose,
   onToggle,
+  onDefer,
 }: {
   task: WorkTask;
   now: Date;
   onClose: () => void;
   onToggle: () => void;
+  onDefer: () => void;
 }) {
+  const projection = projectTask(task, now);
+  const drawerRef = useDialogFocus<HTMLElement>(onClose);
+
   return (
     <div className={styles.overlayLayer}>
       <button
@@ -1144,6 +1841,7 @@ function TaskDrawer({
         aria-label="Close task details"
       />
       <aside
+        ref={drawerRef}
         className={styles.drawer}
         role="dialog"
         aria-modal="true"
@@ -1163,11 +1861,38 @@ function TaskDrawer({
           <div className={styles.detailPills}>
             <span data-importance={task.importance}>{task.importance}</span>
             <span>{task.area}</span>
+            <span>Priority {projection.priorityScore}/100</span>
+            {projection.stale.isStale ? <span>Needs review</span> : null}
+            {projection.dependencies.blockedBy.length ? (
+              <span>Blocked</span>
+            ) : null}
             {task.isSample ? <span>Sample</span> : null}
           </div>
           <p className={styles.detailProject}>{task.project}</p>
           <h2 id="task-drawer-title">{task.title}</h2>
           <p className={styles.detailRationale}>{task.rationale}</p>
+
+          <div className={styles.priorityExplanation}>
+            <div>
+              <strong>Why this?</strong>
+              <span>{projection.explanation.horizonReason}</span>
+            </div>
+            <p>{projection.explanation.summary}</p>
+            <ul>
+              {projection.explanation.factors
+                .filter((factor) => factor.points !== 0)
+                .slice(0, 4)
+                .map((factor) => (
+                  <li key={factor.key}>
+                    <span>{factor.label}</span>
+                    <strong>
+                      {factor.points > 0 ? "+" : ""}
+                      {factor.points}
+                    </strong>
+                  </li>
+                ))}
+            </ul>
+          </div>
 
           <div className={styles.detailFacts}>
             <div>
@@ -1237,6 +1962,18 @@ function TaskDrawer({
           >
             Close
           </button>
+          {task.status !== "completed" ? (
+            <button
+              type="button"
+              className={styles.drawerSecondary}
+              onClick={() => {
+                onDefer();
+                onClose();
+              }}
+            >
+              Defer to tomorrow
+            </button>
+          ) : null}
           <button
             type="button"
             className={styles.drawerPrimary}
@@ -1259,14 +1996,26 @@ function SourcesDrawer({
   checkedAt,
   refreshing,
   onRefresh,
+  onDisconnect,
+  onClearLocal,
   onClose,
 }: {
   connectors: PublicConnectorState[];
   checkedAt: string;
   refreshing: boolean;
   onRefresh: () => void;
+  onDisconnect: (connectorId: ConnectorId) => void;
+  onClearLocal: () => void;
   onClose: () => void;
 }) {
+  const liveCount = connectors.filter(
+    (connector) => connector.status === "connected",
+  ).length;
+  const authorizedCount = connectors.filter(
+    (connector) => connector.status === "authorized",
+  ).length;
+  const drawerRef = useDialogFocus<HTMLElement>(onClose);
+
   return (
     <div className={styles.overlayLayer}>
       <button
@@ -1276,6 +2025,7 @@ function SourcesDrawer({
         aria-label="Close sources"
       />
       <aside
+        ref={drawerRef}
         className={`${styles.drawer} ${styles.sourcesDrawer}`}
         role="dialog"
         aria-modal="true"
@@ -1297,10 +2047,16 @@ function SourcesDrawer({
               <Icon name="link" size={20} />
             </div>
             <div>
-              <p>No external source is live</p>
+              <p>
+                {liveCount
+                  ? `${liveCount} source${liveCount === 1 ? "" : "s"} live`
+                  : authorizedCount
+                    ? `${authorizedCount} authorized · sync not live`
+                    : "No external source is live"}
+              </p>
               <span>
-                This MVP exposes connector readiness without pretending to sync
-                data it cannot access.
+                Authorization, ingestion, and freshness are reported separately
+                so setup is never mistaken for live data.
               </span>
             </div>
           </div>
@@ -1320,11 +2076,48 @@ function SourcesDrawer({
                   {connector.statusLabel}
                 </div>
                 <p>{connector.detail}</p>
+                {connector.accountLabel ? (
+                  <p className={styles.accountLabel}>
+                    Authorized account: {connector.accountLabel}
+                  </p>
+                ) : null}
                 <div className={styles.capabilityList}>
                   {connector.capabilities.map((capability) => (
                     <span key={capability}>{capability}</span>
                   ))}
                 </div>
+                {connector.blockers.length ? (
+                  <div className={styles.blockerList}>
+                    <strong>Configuration needed</strong>
+                    {connector.blockers.map((blocker) => (
+                      <code key={blocker}>{blocker}</code>
+                    ))}
+                    {connector.callbackPath ? (
+                      <span>
+                        Callback path: <code>{connector.callbackPath}</code>
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {connector.setupUrl || connector.accountLabel ? (
+                  <div className={styles.connectorActions}>
+                    {connector.setupUrl ? (
+                      <a href={connector.setupUrl}>
+                        {connector.status === "ready_to_connect"
+                          ? "Connect"
+                          : "Reauthorize"}
+                      </a>
+                    ) : null}
+                    {connector.accountLabel ? (
+                      <button
+                        type="button"
+                        onClick={() => onDisconnect(connector.id)}
+                      >
+                        Delete local grant
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
               </article>
             ))}
           </div>
@@ -1335,10 +2128,21 @@ function SourcesDrawer({
             </div>
             <p>
               <strong>Server-side by design</strong>
-              OAuth secrets and provider tokens belong in encrypted server
-              storage. The browser receives only redacted status metadata and
-              normalized work signals.
+              OAuth code is development-gated. Production connection remains
+              blocked until authenticated tenancy, KMS-backed credentials,
+              verified webhooks, revocation, and deletion controls exist.
             </p>
+          </div>
+          <div className={styles.localDataControls}>
+            <div>
+              <strong>Browser-local preview data</strong>
+              <span>
+                Manual tasks in this MVP are not suitable for sensitive work.
+              </span>
+            </div>
+            <button type="button" onClick={onClearLocal}>
+              Clear local workspace
+            </button>
           </div>
         </div>
 
@@ -1380,6 +2184,8 @@ function AddTaskDialog({
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const modalRef = useDialogFocus<HTMLDivElement>(onClose);
+
   return (
     <div className={`${styles.overlayLayer} ${styles.modalLayer}`}>
       <button
@@ -1389,6 +2195,7 @@ function AddTaskDialog({
         aria-label="Close add task dialog"
       />
       <div
+        ref={modalRef}
         className={styles.modal}
         role="dialog"
         aria-modal="true"
@@ -1484,7 +2291,8 @@ function AddTaskDialog({
 
           <div className={styles.localNote}>
             <Icon name="lock" size={15} />
-            Saved only in this browser for the MVP.
+            Saved only in this browser. Do not enter sensitive work content in
+            the preview.
           </div>
 
           <div className={styles.modalActions}>
@@ -1502,6 +2310,55 @@ function AddTaskDialog({
   );
 }
 
+function useDialogFocus<T extends HTMLElement>(onClose: () => void) {
+  const containerRef = useRef<T>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    const previous = document.activeElement;
+    const container = containerRef.current;
+    if (!container) return;
+
+    const selector =
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const focusable = Array.from(
+      container.querySelectorAll<HTMLElement>(selector),
+    );
+    focusable[0]?.focus();
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const activeItems = Array.from(
+        container?.querySelectorAll<HTMLElement>(selector) ?? [],
+      );
+      if (!activeItems.length) return;
+      const first = activeItems[0];
+      const last = activeItems[activeItems.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    container.addEventListener("keydown", handleKeyDown);
+    return () => {
+      container.removeEventListener("keydown", handleKeyDown);
+      if (previous instanceof HTMLElement) previous.focus();
+    };
+  }, []);
+
+  return containerRef;
+}
+
 function matchesQuery(task: WorkTask, query: string) {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return true;
@@ -1515,6 +2372,13 @@ function matchesQuery(task: WorkTask, query: string) {
     .join(" ")
     .toLowerCase()
     .includes(normalized);
+}
+
+function getGreeting(now: Date) {
+  const hour = now.getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
 }
 
 function formatDuration(minutes: number) {
@@ -1576,7 +2440,10 @@ function isStoredTask(value: unknown): value is WorkTask {
     "gmail",
     "slack",
     "calendar",
+    "drive",
+    "notion",
     "granola",
+    "linkedin",
     "manual",
     "webhook",
   ];
@@ -1606,5 +2473,20 @@ function isStoredTask(value: unknown): value is WorkTask {
     (task.area === "Work" ||
       task.area === "Personal" ||
       task.area === "Wellbeing")
+  );
+}
+
+function isStoredSampleOverride(
+  value: unknown,
+): value is NonNullable<SavedWorkspace["sampleOverrides"]>[number] {
+  if (!value || typeof value !== "object") return false;
+  const override = value as Record<string, unknown>;
+  return (
+    typeof override.id === "string" &&
+    (override.status === "open" || override.status === "completed") &&
+    typeof override.dueAt === "string" &&
+    (override.deferredUntil === null ||
+      typeof override.deferredUntil === "string") &&
+    (override.completedAt === null || typeof override.completedAt === "string")
   );
 }

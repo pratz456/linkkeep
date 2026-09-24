@@ -1,6 +1,7 @@
 import type {
   ConnectorId,
   ContextSignal,
+  FollowUp,
   ScheduleItem,
   WorkTask,
   WorkspaceSnapshot,
@@ -16,6 +17,10 @@ function atOffset(
   result.setDate(result.getDate() + dayOffset);
   result.setHours(hour, minute, 0, 0);
   return result.toISOString();
+}
+
+function afterMinutes(now: Date, minutes: number) {
+  return new Date(now.getTime() + minutes * 60 * 1000).toISOString();
 }
 
 function signal(
@@ -68,6 +73,24 @@ export function createDemoWorkspace(now = new Date()): WorkspaceSnapshot {
       ],
       rationale:
         "High-impact decision with three recent context signals and a same-day review.",
+      reasonCodes: ["due_today", "blocks_launch", "corroborated_context"],
+      priority: {
+        deadlineKind: "hard",
+        deadlineConfidence: 0.98,
+        impactLevel: 4,
+        impactConfidence: 0.94,
+        commitmentKind: "assignment",
+        commitmentConfidence: 0.92,
+        accepted: true,
+        lastEvidenceAt: atOffset(now, 0, 8, 42),
+        unblocks: [
+          {
+            id: "atlas-release",
+            title: "Atlas release",
+            importance: "major",
+          },
+        ],
+      },
       createdAt: atOffset(now, -3, 10),
       isSample: true,
     },
@@ -99,6 +122,17 @@ export function createDemoWorkspace(now = new Date()): WorkspaceSnapshot {
       ],
       rationale:
         "Revenue-sensitive work that is due today and blocks tomorrow’s conversation.",
+      reasonCodes: ["due_today", "customer_commitment"],
+      priority: {
+        deadlineKind: "hard",
+        deadlineConfidence: 0.96,
+        impactLevel: 3,
+        impactConfidence: 0.9,
+        commitmentKind: "promise",
+        commitmentConfidence: 0.85,
+        accepted: true,
+        lastEvidenceAt: atOffset(now, 0, 7, 55),
+      },
       createdAt: atOffset(now, -2, 14),
       isSample: true,
     },
@@ -122,6 +156,17 @@ export function createDemoWorkspace(now = new Date()): WorkspaceSnapshot {
         ),
       ],
       rationale: "A quick commitment that is now overdue.",
+      reasonCodes: ["overdue", "promised_follow_up"],
+      priority: {
+        deadlineKind: "hard",
+        deadlineConfidence: 0.95,
+        impactLevel: 1,
+        impactConfidence: 0.9,
+        commitmentKind: "promise",
+        commitmentConfidence: 0.85,
+        accepted: true,
+        lastEvidenceAt: atOffset(now, -1, 16),
+      },
       createdAt: atOffset(now, -1, 16),
       isSample: true,
     },
@@ -257,6 +302,10 @@ export function createDemoWorkspace(now = new Date()): WorkspaceSnapshot {
       kind: "meeting",
       sourceId: "calendar",
       attendees: 7,
+      location: "Zoom",
+      joinUrl: null,
+      preparationNote: "Scan open launch risks before the call.",
+      conflictState: "none",
       isSample: true,
     },
     {
@@ -266,6 +315,10 @@ export function createDemoWorkspace(now = new Date()): WorkspaceSnapshot {
       endAt: atOffset(now, 0, 12),
       kind: "focus",
       sourceId: "calendar",
+      location: null,
+      joinUrl: null,
+      preparationNote: "Work from the launch decision brief.",
+      conflictState: "none",
       isSample: true,
     },
     {
@@ -275,25 +328,37 @@ export function createDemoWorkspace(now = new Date()): WorkspaceSnapshot {
       endAt: atOffset(now, 0, 13, 15),
       kind: "personal",
       sourceId: "manual",
+      location: "Away from desk",
+      joinUrl: null,
+      preparationNote: null,
+      conflictState: "none",
       isSample: true,
     },
     {
       id: "schedule-review",
       title: "Launch decision review",
-      startAt: atOffset(now, 0, 15, 30),
-      endAt: atOffset(now, 0, 16),
+      startAt: afterMinutes(now, 45),
+      endAt: afterMinutes(now, 75),
       kind: "meeting",
       sourceId: "calendar",
       attendees: 4,
+      location: "Sample room · Cedar",
+      joinUrl: null,
+      preparationNote: "Bring the v1 scope recommendation.",
+      conflictState: "none",
       isSample: true,
     },
     {
       id: "schedule-walk",
       title: "Reset walk",
-      startAt: atOffset(now, 0, 17, 30),
-      endAt: atOffset(now, 0, 18),
+      startAt: afterMinutes(now, 105),
+      endAt: afterMinutes(now, 135),
       kind: "personal",
       sourceId: "manual",
+      location: "Outside",
+      joinUrl: null,
+      preparationNote: null,
+      conflictState: "none",
       isSample: true,
     },
     {
@@ -304,6 +369,10 @@ export function createDemoWorkspace(now = new Date()): WorkspaceSnapshot {
       kind: "meeting",
       sourceId: "calendar",
       attendees: 3,
+      location: "Google Meet",
+      joinUrl: null,
+      preparationNote: "Review the pricing attachment.",
+      conflictState: "none",
       isSample: true,
     },
     {
@@ -313,6 +382,10 @@ export function createDemoWorkspace(now = new Date()): WorkspaceSnapshot {
       endAt: atOffset(now, 3, 16, 45),
       kind: "focus",
       sourceId: "manual",
+      location: null,
+      joinUrl: null,
+      preparationNote: null,
+      conflictState: "none",
       isSample: true,
     },
     {
@@ -322,6 +395,37 @@ export function createDemoWorkspace(now = new Date()): WorkspaceSnapshot {
       endAt: atOffset(now, 5, 15, 30),
       kind: "focus",
       sourceId: "manual",
+      location: null,
+      joinUrl: null,
+      preparationNote: null,
+      conflictState: "none",
+      isSample: true,
+    },
+  ];
+
+  const followUps: FollowUp[] = [
+    {
+      id: "followup-jordan",
+      person: "Jordan Blake",
+      context: "Hiring plan introduction",
+      lastContactedAt: atOffset(now, -12, 15),
+      dueAt: atOffset(now, -1, 17),
+      kind: "explicit",
+      reason: "You promised to send the role outline.",
+      nextAction: "Compose follow-up",
+      status: "open",
+      isSample: true,
+    },
+    {
+      id: "followup-priya",
+      person: "Priya Nair",
+      context: "October founder check-in",
+      lastContactedAt: atOffset(now, -34, 11),
+      dueAt: atOffset(now, 0, 17),
+      kind: "suggested",
+      reason: "Suggested from a monthly relationship cadence.",
+      nextAction: "Review suggestion",
+      status: "open",
       isSample: true,
     },
   ];
@@ -329,6 +433,7 @@ export function createDemoWorkspace(now = new Date()): WorkspaceSnapshot {
   return {
     tasks,
     schedule,
+    followUps,
     generatedAt: now.toISOString(),
     isSample: true,
   };

@@ -4,13 +4,14 @@ import { createDemoWorkspace } from "@/lib/workspace/demo-data";
 
 export const dynamic = "force-dynamic";
 
-export default function HomePage() {
+export default async function HomePage() {
   const initialSnapshot = createDemoWorkspace();
+  const initialConnectors = await getPublicConnectorStates();
 
   return (
     <Workspace
       initialSnapshot={initialSnapshot}
-      initialConnectors={getPublicConnectorStates()}
+      initialConnectors={initialConnectors}
     />
   );
 }

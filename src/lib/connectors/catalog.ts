@@ -35,6 +35,33 @@ export const CONNECTOR_CATALOG: readonly ConnectorDefinition[] = [
     setupKind: "oauth",
   },
   {
+    id: "drive",
+    label: "Google Drive",
+    shortLabel: "Drive",
+    description:
+      "Use recently changed files as supporting context for active work.",
+    capabilities: ["Recent files", "File metadata", "Shared context"],
+    setupKind: "oauth",
+  },
+  {
+    id: "notion",
+    label: "Notion",
+    shortLabel: "Notion",
+    description:
+      "Reference pages and databases explicitly shared with the integration.",
+    capabilities: ["Shared pages", "Databases", "Recent edits"],
+    setupKind: "oauth",
+  },
+  {
+    id: "linkedin",
+    label: "LinkedIn",
+    shortLabel: "LinkedIn",
+    description:
+      "Use official CSV import for relationships; API sync needs partner approval.",
+    capabilities: ["OIDC identity", "Connections CSV", "Follow-ups"],
+    setupKind: "export",
+  },
+  {
     id: "granola",
     label: "Granola",
     shortLabel: "Granola",

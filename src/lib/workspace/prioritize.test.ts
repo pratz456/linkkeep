@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   getCompletionStats,
+  getPrimaryHorizon,
   prioritizeTasks,
+  projectTask,
   scoreTask,
 } from "@/lib/workspace/prioritize";
 import type { Importance, TaskStatus, WorkTask } from "@/lib/workspace/types";
@@ -31,10 +33,10 @@ function task(
 }
 
 describe("prioritizeTasks", () => {
-  it("keeps major work ahead of minor work while accounting for urgency", () => {
-    const majorTomorrow = task(
-      "major-tomorrow",
-      new Date(2026, 8, 25, 12),
+  it("keeps impact classification separate from urgency score", () => {
+    const majorLater = task(
+      "major-later",
+      new Date(2026, 9, 14, 12),
       "major",
     );
     const minorOverdue = task(
@@ -43,18 +45,10 @@ describe("prioritizeTasks", () => {
       "minor",
     );
 
-    const result = prioritizeTasks(
-      [minorOverdue, majorTomorrow],
-      "week",
-      now,
-    );
-
-    expect(result.map((item) => item.id)).toEqual([
-      "major-tomorrow",
-      "minor-overdue",
-    ]);
-    expect(scoreTask(majorTomorrow, now)).toBeGreaterThan(
-      scoreTask(minorOverdue, now),
+    expect(projectTask(majorLater, now).importance).toBe("major");
+    expect(projectTask(minorOverdue, now).importance).toBe("minor");
+    expect(scoreTask(minorOverdue, now)).toBeGreaterThan(
+      scoreTask(majorLater, now),
     );
   });
 
@@ -89,6 +83,106 @@ describe("prioritizeTasks", () => {
     );
 
     expect(prioritizeTasks([completed], "today", now)).toEqual([]);
+  });
+
+  it("keeps hard-overdue work in Today and far-future work out of Month", () => {
+    const overdue = task("overdue", new Date(2026, 7, 1, 12));
+    const future = task("future", new Date(2026, 11, 1, 12));
+
+    expect(getPrimaryHorizon(overdue, now)).toBe("today");
+    expect(getPrimaryHorizon(future, now)).toBe("future");
+    expect(prioritizeTasks([overdue, future], "month", now)).toHaveLength(1);
+  });
+
+  it("returns deterministic, fully explained score factors", () => {
+    const item = task("explained", new Date(2026, 8, 24, 18), "major");
+    item.priority = {
+      impactLevel: 4,
+      impactConfidence: 0.9,
+      commitmentKind: "manual",
+      commitmentConfidence: 1,
+      manualRankAdjustment: 5,
+    };
+
+    const first = projectTask(item, now);
+    const second = projectTask(item, now);
+    const factorTotal = first.explanation.factors.reduce(
+      (sum, factor) => sum + factor.points,
+      0,
+    );
+
+    expect(first).toEqual(second);
+    expect(factorTotal).toBe(first.priorityScore);
+    expect(first.explanation.summary).toContain("Deadline");
+    expect(first.overrides).toContainEqual(
+      expect.objectContaining({ field: "rank_boost", value: 5 }),
+    );
+  });
+
+  it("does not multiply recency for repeated signals from one source family", () => {
+    const oneSignal = task("one-signal", new Date(2026, 8, 25, 12));
+    oneSignal.sourceIds = ["slack"];
+    oneSignal.signals = [
+      {
+        id: "signal-1",
+        connectorId: "slack",
+        label: "Thread",
+        detail: "Action requested",
+        occurredAt: new Date(2026, 8, 24, 10).toISOString(),
+      },
+    ];
+    const tenSignals = {
+      ...oneSignal,
+      id: "ten-signals",
+      signals: Array.from({ length: 10 }, (_, index) => ({
+        ...oneSignal.signals[0],
+        id: `signal-${index}`,
+      })),
+    };
+
+    expect(scoreTask(tenSignals, now)).toBe(scoreTask(oneSignal, now));
+  });
+
+  it("applies a transparent blocker penalty", () => {
+    const clear = task("clear", new Date(2026, 8, 25, 12), "major");
+    const blocked = {
+      ...clear,
+      id: "blocked",
+      priority: {
+        blockedBy: [{ id: "predecessor", title: "Approve budget" }],
+      },
+    };
+    const projection = projectTask(blocked, now);
+
+    expect(scoreTask(blocked, now)).toBe(scoreTask(clear, now) - 18);
+    expect(projection.explanation.factors).toContainEqual(
+      expect.objectContaining({ key: "blocked", points: -18 }),
+    );
+  });
+
+  it("flags stale inferred work without hiding hard-deadline work", () => {
+    const inferred = task("inferred", new Date(2026, 8, 15, 12));
+    inferred.createdAt = new Date(2026, 7, 1, 12).toISOString();
+    inferred.priority = {
+      deadlineKind: "inferred",
+      deadlineConfidence: 0.7,
+      lastEvidenceAt: new Date(2026, 7, 1, 12).toISOString(),
+    };
+    const hard = {
+      ...inferred,
+      id: "hard",
+      priority: {
+        ...inferred.priority,
+        deadlineKind: "hard" as const,
+      },
+    };
+
+    expect(projectTask(inferred, now).stale.isStale).toBe(true);
+    expect(projectTask(inferred, now).explanation.factors).toContainEqual(
+      expect.objectContaining({ key: "stale", points: -15 }),
+    );
+    expect(projectTask(hard, now).stale.isStale).toBe(false);
+    expect(getPrimaryHorizon(hard, now)).toBe("today");
   });
 });
 

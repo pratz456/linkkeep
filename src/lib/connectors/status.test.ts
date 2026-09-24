@@ -5,17 +5,24 @@ describe("resolveConnectorStates", () => {
   it("returns only redacted connector metadata", () => {
     const secret = "do-not-leak-this-secret";
     const connectors = resolveConnectorStates({
-      WORKLIFE_GMAIL_CLIENT_ID: "client-id",
-      WORKLIFE_GMAIL_CLIENT_SECRET: secret,
-      WORKLIFE_GMAIL_REDIRECT_URI: "https://example.com/callback",
+      DATABASE_URL: "postgres://configured",
+      WORKLIFE_APP_URL: "http://localhost:3000",
+      WORKLIFE_ENABLE_CONNECTOR_AUTHORIZATION: "true",
+      WORKLIFE_SESSION_SECRET:
+        "a-session-secret-that-is-at-least-32-characters",
+      CONNECTOR_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
+      WORKLIFE_GOOGLE_CLIENT_ID: "client-id",
+      WORKLIFE_GOOGLE_CLIENT_SECRET: secret,
+      WORKLIFE_GMAIL_VERIFICATION_STATUS: "approved",
     });
     const gmail = connectors.find((connector) => connector.id === "gmail");
 
-    expect(gmail?.status).toBe("credentials_ready");
+    expect(gmail?.status).toBe("ready_to_connect");
     expect(gmail?.lastSyncedAt).toBeNull();
+    expect(gmail?.setupUrl).toBe("/api/connectors/gmail/authorize");
     expect(JSON.stringify(connectors)).not.toContain(secret);
     expect(JSON.stringify(connectors)).not.toContain(
-      "WORKLIFE_GMAIL_CLIENT_SECRET",
+      "WORKLIFE_GOOGLE_CLIENT_SECRET",
     );
   });
 
@@ -34,5 +41,60 @@ describe("resolveConnectorStates", () => {
     expect(
       connectors.every((connector) => connector.lastSyncedAt === null),
     ).toBe(true);
+  });
+
+  it("separates saved authorization from a completed live sync", () => {
+    const environment = {
+      DATABASE_URL: "postgres://configured",
+      WORKLIFE_APP_URL: "http://localhost:3000",
+      WORKLIFE_ENABLE_CONNECTOR_AUTHORIZATION: "true",
+      WORKLIFE_SESSION_SECRET:
+        "a-session-secret-that-is-at-least-32-characters",
+      CONNECTOR_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
+      WORKLIFE_SLACK_CLIENT_ID: "client-id",
+      WORKLIFE_SLACK_CLIENT_SECRET: "client-secret",
+      WORKLIFE_SLACK_SIGNING_SECRET: "signing-secret",
+    };
+
+    const authorized = resolveConnectorStates(environment, [
+      {
+        provider: "slack",
+        accountLabel: "Example workspace",
+        authorizedAt: "2026-09-24T12:00:00.000Z",
+        lastSyncedAt: null,
+      },
+    ]).find((connector) => connector.id === "slack");
+    const live = resolveConnectorStates(environment, [
+      {
+        provider: "slack",
+        accountLabel: "Example workspace",
+        authorizedAt: "2026-09-24T12:00:00.000Z",
+        lastSyncedAt: "2026-09-24T12:05:00.000Z",
+      },
+    ]).find((connector) => connector.id === "slack");
+
+    expect(authorized?.status).toBe("authorized");
+    expect(live?.status).toBe("connected");
+  });
+
+  it("never advertises production readiness before security gates exist", () => {
+    const gmail = resolveConnectorStates({
+      NODE_ENV: "production",
+      DATABASE_URL: "postgres://configured",
+      WORKLIFE_APP_URL: "https://morrow.example",
+      WORKLIFE_SESSION_SECRET:
+        "a-session-secret-that-is-at-least-32-characters",
+      CONNECTOR_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"),
+      WORKLIFE_GOOGLE_CLIENT_ID: "client-id",
+      WORKLIFE_GOOGLE_CLIENT_SECRET: "client-secret",
+      WORKLIFE_GMAIL_VERIFICATION_STATUS: "approved",
+      WORKLIFE_ENABLE_CONNECTOR_AUTHORIZATION: "true",
+    }).find((connector) => connector.id === "gmail");
+
+    expect(gmail?.status).toBe("needs_setup");
+    expect(gmail?.setupUrl).toBeNull();
+    expect(gmail?.blockers).toContain(
+      "Production identity, tenant isolation, KMS encryption, verified webhooks, and deletion controls",
+    );
   });
 });
