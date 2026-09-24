@@ -3142,6 +3142,11 @@
   font-size: 11px;
 }
 
+.timelineTime strong,
+.timelineTime span {
+  font-size: 10px;
+}
+
 .navItem:focus-visible,
 .areaItem:focus-visible,
 .sourceSummary:focus-visible,
