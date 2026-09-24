@@ -110,9 +110,8 @@ export function Workspace({
   initialSnapshot,
   initialConnectors,
 }: WorkspaceProps) {
-  const now = useMemo(
+  const [now, setNow] = useState(
     () => new Date(initialSnapshot.generatedAt),
-    [initialSnapshot.generatedAt],
   );
   const [tasks, setTasks] = useState(initialSnapshot.tasks);
   const [connectors, setConnectors] = useState(initialConnectors);
@@ -309,6 +308,11 @@ export function Workspace({
     return () => window.clearInterval(interval);
   }, [activeFocus]);
 
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
   const openTasks = useMemo(
     () => prioritizeTasks(tasks, horizon, now),
     [tasks, horizon, now],
@@ -328,6 +332,7 @@ export function Workspace({
     () => groupByImportance(filteredTasks),
     [filteredTasks],
   );
+  const focusTask = groupedTasks.major[0] ?? groupedTasks.minor[0] ?? null;
 
   const completedTasks = useMemo(() => {
     const horizonStart = getHorizonStart(horizon, now).getTime();
@@ -374,11 +379,11 @@ export function Workspace({
     ) ?? schedule.find((item) => item.kind === "meeting");
   const activeFocusTask =
     tasks.find((task) => task.id === activeFocus?.taskId) ?? null;
-  const activeFocusMinutes = activeFocus
+  const activeFocusSeconds = activeFocus
     ? Math.max(
         0,
         Math.floor(
-          (focusClock - new Date(activeFocus.startedAt).getTime()) / 60000,
+          (focusClock - new Date(activeFocus.startedAt).getTime()) / 1000,
         ),
       )
     : 0;
@@ -1026,9 +1031,97 @@ export function Workspace({
             </div>
           </section>
 
+          <section className={styles.dayPulse} aria-label="At a glance">
+            {focusTask ? (
+              <button
+                type="button"
+                className={`${styles.pulseCard} ${styles.pulseFocus}`}
+                onClick={() => setSelectedTaskId(focusTask.id)}
+              >
+                <span className={styles.pulseIcon}>
+                  <Icon name="target" size={17} />
+                </span>
+                <span className={styles.pulseCopy}>
+                  <small>Focus now</small>
+                  <strong>{focusTask.title}</strong>
+                  <em>
+                    {formatDuration(focusTask.estimateMinutes)} ·{" "}
+                    {formatDue(focusTask.dueAt, now)}
+                  </em>
+                </span>
+                <Icon name="arrow-right" size={16} />
+              </button>
+            ) : (
+              <article className={`${styles.pulseCard} ${styles.pulseFocus}`}>
+                <span className={styles.pulseIcon}>
+                  <Icon name="check" size={17} />
+                </span>
+                <span className={styles.pulseCopy}>
+                  <small>Focus now</small>
+                  <strong>Your priority stack is clear</strong>
+                  <em>Add a commitment when something needs attention.</em>
+                </span>
+              </article>
+            )}
+
+            {nextMeeting ? (
+              <button
+                type="button"
+                className={`${styles.pulseCard} ${styles.pulseMeeting}`}
+                onClick={() =>
+                  setToast("Sample meeting has no live calendar link")
+                }
+              >
+                <span className={styles.pulseIcon}>
+                  <Icon name="calendar" size={17} />
+                </span>
+                <span className={styles.pulseCopy}>
+                  <small>{formatCountdown(nextMeeting.startAt, now)}</small>
+                  <strong>{nextMeeting.title}</strong>
+                  <em>
+                    {formatClockTime(nextMeeting.startAt)} ·{" "}
+                    {nextMeeting.attendees ?? 1} people
+                  </em>
+                </span>
+                <Icon name="arrow-right" size={16} />
+              </button>
+            ) : (
+              <article className={`${styles.pulseCard} ${styles.pulseMeeting}`}>
+                <span className={styles.pulseIcon}>
+                  <Icon name="calendar" size={17} />
+                </span>
+                <span className={styles.pulseCopy}>
+                  <small>Calendar</small>
+                  <strong>No meeting pressure ahead</strong>
+                  <em>Your visible schedule is open.</em>
+                </span>
+              </article>
+            )}
+
+            <article className={`${styles.pulseCard} ${styles.pulseProgress}`}>
+              <span className={styles.pulseIcon}>
+                <Icon name="check" size={17} />
+              </span>
+              <span className={styles.pulseCopy}>
+                <small>Momentum</small>
+                <strong>{stats.percent}% complete</strong>
+                <em>
+                  {stats.completed} of {stats.total} ·{" "}
+                  {formatDuration(openMinutes)} left
+                </em>
+                <span className={styles.pulseProgressBar} aria-hidden="true">
+                  <span style={{ width: `${stats.percent}%` }} />
+                </span>
+              </span>
+            </article>
+          </section>
+
           {area !== "All" || query ? (
             <div className={styles.activeFilters} aria-label="Active filters">
-              <span>Filtered by</span>
+              <span>
+                <Icon name="search" size={14} />
+                Showing
+              </span>
               {area !== "All" ? (
                 <button type="button" onClick={() => selectArea("All")}>
                   Area: {area}
@@ -1124,7 +1217,13 @@ export function Workspace({
                                 <strong>{signal.label}</strong>
                                 <small>{signal.detail}</small>
                               </span>
-                              <em>
+                              <em
+                                data-action={
+                                  signal.connectorId === "gmail"
+                                    ? "reply"
+                                    : "decision"
+                                }
+                              >
                                 {signal.connectorId === "gmail"
                                   ? "Reply likely"
                                   : "Decision needed"}
@@ -1274,10 +1373,6 @@ export function Workspace({
                     No sample calendar items in this range.
                   </p>
                 )}
-                <div className={styles.scheduleFooter}>
-                  <Icon name="lock" size={14} />
-                  Calendar is not connected
-                </div>
               </section>
 
               <section className={styles.focusPanel}>
@@ -1293,11 +1388,19 @@ export function Workspace({
                 {activeFocusTask ? (
                   <div className={styles.activeFocus}>
                     <p>{activeFocusTask.title}</p>
-                    <strong>{formatDuration(activeFocusMinutes)}</strong>
+                    <strong
+                      aria-label={`${formatElapsedTime(activeFocusSeconds)} elapsed`}
+                    >
+                      {formatElapsedTime(activeFocusSeconds)}
+                    </strong>
                     <span>
                       Next interruption:{" "}
                       {nextMeeting
-                        ? formatDue(nextMeeting.startAt, now)
+                        ? formatCountdown(
+                            nextMeeting.startAt,
+                            now,
+                            nextMeeting.endAt,
+                          ).toLowerCase()
                         : "none scheduled"}
                     </span>
                     <button type="button" onClick={endFocus}>
@@ -1543,29 +1646,22 @@ function NextMeetingCard({
   onOpen: () => void;
 }) {
   const start = new Date(meeting.startAt);
-  const end = new Date(meeting.endAt);
   const minutesUntil = (start.getTime() - now.getTime()) / 60000;
   const canJoin =
     Boolean(meeting.joinUrl) && minutesUntil <= 10 && minutesUntil >= -15;
+  const countdown = formatCountdown(meeting.startAt, now, meeting.endAt);
 
   return (
     <article className={styles.nextMeetingCard}>
       <div className={styles.nextMeetingTime}>
-        <span>Next meeting</span>
+        <span data-state={minutesUntil <= 0 ? "active" : "upcoming"}>
+          {countdown}
+        </span>
         <strong>
-          {new Intl.DateTimeFormat("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-            timeZone: DISPLAY_TIME_ZONE,
-          }).format(start)}
+          {formatClockTime(meeting.startAt)}
         </strong>
         <small>
-          until{" "}
-          {new Intl.DateTimeFormat("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-            timeZone: DISPLAY_TIME_ZONE,
-          }).format(end)}
+          until {formatClockTime(meeting.endAt)}
         </small>
       </div>
       <div className={styles.nextMeetingBody}>
@@ -1614,6 +1710,7 @@ function MajorTaskCard({
       className={`${styles.majorCard} ${
         featured ? styles.majorCardFeatured : ""
       }`}
+      data-urgency={getDueTone(task.dueAt, now)}
     >
       <button
         type="button"
@@ -1652,11 +1749,19 @@ function MajorTaskCard({
       </div>
       <footer className={styles.majorFooter}>
         <div>
-          <span>
+          <span className={styles.effortMeta}>
             <Icon name="clock" size={14} />
-            {formatDuration(task.estimateMinutes)}
+            <small>Effort</small>
+            <strong>{formatDuration(task.estimateMinutes)}</strong>
           </span>
-          <span>{formatDue(task.dueAt, now)}</span>
+          <span
+            className={styles.dueMeta}
+            data-urgency={getDueTone(task.dueAt, now)}
+          >
+            <Icon name="calendar" size={14} />
+            <small>Due</small>
+            <strong>{formatDue(task.dueAt, now)}</strong>
+          </span>
         </div>
         <button
           type="button"
@@ -1703,8 +1808,13 @@ function MinorTaskRow({
         </span>
         <span className={styles.minorMeta}>
           <span>{task.project}</span>
-          <span>·</span>
-          <span>{formatDue(task.dueAt, now)}</span>
+          <span
+            className={styles.minorDue}
+            data-urgency={getDueTone(task.dueAt, now)}
+          >
+            <Icon name="calendar" size={11} />
+            {formatDue(task.dueAt, now)}
+          </span>
         </span>
       </button>
       <SourceStack sourceIds={task.sourceIds} compact />
@@ -1921,6 +2031,10 @@ function TaskDrawer({
               <span>{projection.explanation.horizonReason}</span>
             </div>
             <p>{projection.explanation.summary}</p>
+            <small>
+              Each point shows how much that factor contributes to the priority
+              score.
+            </small>
             <ul>
               {projection.explanation.factors
                 .filter((factor) => factor.points !== 0)
@@ -2439,6 +2553,55 @@ function formatDuration(minutes: number) {
   return `${hours}h ${remainder}m`;
 }
 
+function formatElapsedTime(seconds: number) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  return hours
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`
+    : `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+
+function formatClockTime(date: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: DISPLAY_TIME_ZONE,
+  }).format(new Date(date));
+}
+
+function formatCountdown(startAt: string, now: Date, endAt?: string) {
+  const distanceMinutes = Math.ceil(
+    (new Date(startAt).getTime() - now.getTime()) / 60_000,
+  );
+  if (
+    distanceMinutes <= 0 &&
+    (!endAt || new Date(endAt).getTime() >= now.getTime())
+  ) {
+    return "Happening now";
+  }
+  if (distanceMinutes <= 0) return "Recently ended";
+  if (distanceMinutes < 60) return `In ${distanceMinutes}m`;
+  const hours = Math.floor(distanceMinutes / 60);
+  const minutes = distanceMinutes % 60;
+  return minutes ? `In ${hours}h ${minutes}m` : `In ${hours}h`;
+}
+
+function getDueTone(dueAt: string, now: Date) {
+  const due = new Date(dueAt);
+  if (due.getTime() < now.getTime()) return "overdue";
+  const today = new Date(now);
+  today.setUTCHours(0, 0, 0, 0);
+  const dueDay = new Date(due);
+  dueDay.setUTCHours(0, 0, 0, 0);
+  const dayDifference = Math.round(
+    (dueDay.getTime() - today.getTime()) / 86_400_000,
+  );
+  if (dayDifference === 0) return "today";
+  if (dayDifference <= 2) return "soon";
+  return "later";
+}
+
 function formatDue(dueAt: string, now: Date, long = false) {
   const due = new Date(dueAt);
   const today = new Date(now);
@@ -2454,7 +2617,7 @@ function formatDue(dueAt: string, now: Date, long = false) {
     timeZone: DISPLAY_TIME_ZONE,
   }).format(due);
 
-  if (dayDifference < 0) return `Overdue · ${time}`;
+  if (due.getTime() < now.getTime()) return `Overdue · ${time}`;
   if (dayDifference === 0) return `Today · ${time}`;
   if (dayDifference === 1) return `Tomorrow · ${time}`;
   return new Intl.DateTimeFormat("en-US", {
