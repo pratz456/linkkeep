@@ -63,3 +63,29 @@ export function resolveProviderScopes(
     ? unique
     : null;
 }
+
+export function resolveGrantedScopes(
+  provider: ScopedConnectorId,
+  reportedScope: string | null,
+  requestedScopes: string[],
+) {
+  if (reportedScope?.trim()) {
+    return {
+      value: reportedScope,
+      source: "provider_response" as const,
+    };
+  }
+
+  if (
+    provider === "gmail" ||
+    provider === "calendar" ||
+    provider === "drive"
+  ) {
+    return {
+      value: requestedScopes.join(" "),
+      source: "requested_scope_default" as const,
+    };
+  }
+
+  return null;
+}

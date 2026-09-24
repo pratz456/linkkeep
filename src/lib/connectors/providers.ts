@@ -2,7 +2,10 @@ import "server-only";
 
 import type { ConnectorId } from "@/lib/workspace/types";
 import { compareGrantedScopes } from "@/lib/connectors/security";
-import { resolveProviderScopes } from "@/lib/connectors/scope-policy";
+import {
+  resolveGrantedScopes,
+  resolveProviderScopes,
+} from "@/lib/connectors/scope-policy";
 
 export type OAuthConnectorId =
   | "gmail"
@@ -191,17 +194,26 @@ export async function exchangeAuthorizationCode({
   }
 
   const accessToken = requiredString(payload, "access_token");
+  const grantedScopes = resolveGrantedScopes(
+    config.id,
+    optionalString(payload, "scope"),
+    config.scopes,
+  );
+  if (!grantedScopes) {
+    throw new Error("Provider did not report the granted scopes.");
+  }
   const tokenSet: OAuthTokenSet = {
     accessToken,
     refreshToken: optionalString(payload, "refresh_token"),
     tokenType: optionalString(payload, "token_type"),
-    scope: optionalString(payload, "scope") ?? config.scopes.join(" "),
+    scope: grantedScopes.value,
     expiresAt: expiresAt(payload.expires_in),
     externalAccountId: null,
     accountLabel: "Google account",
     metadata: {
       dataClass: config.id,
       identityResolution: "deferred_to_worker",
+      scopeSource: grantedScopes.source,
     },
   };
   assertExpectedScopes(config.scopes, tokenSet.scope);
