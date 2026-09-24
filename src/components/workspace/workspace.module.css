@@ -742,6 +742,10 @@
   margin-top: 17px;
 }
 
+.mobileNextMeeting {
+  display: none;
+}
+
 .activeFilters {
   display: flex;
   flex-wrap: wrap;
@@ -3208,6 +3212,15 @@
 
   .rightRail {
     grid-template-columns: 1fr;
+  }
+
+  .mobileNextMeeting {
+    display: block;
+    margin-bottom: 13px;
+  }
+
+  .schedulePanel > .nextMeetingCard {
+    display: none;
   }
 
   .balanceCard {

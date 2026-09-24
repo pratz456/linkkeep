@@ -1037,6 +1037,18 @@ export function Workspace({
             </div>
           ) : null}
 
+          {nextMeeting && horizon === "today" ? (
+            <div className={styles.mobileNextMeeting}>
+              <NextMeetingCard
+                meeting={nextMeeting}
+                now={now}
+                onOpen={() =>
+                  setToast("Sample meeting has no live calendar link")
+                }
+              />
+            </div>
+          ) : null}
+
           <div className={styles.contentGrid}>
             <section className={styles.priorityPanel}>
               <div className={styles.sectionHeading}>
